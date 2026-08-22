@@ -81,9 +81,6 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
   const [editingServer, setEditingServer] = useState<PacsServerConfig | null>(null);
   const [editForm, setEditForm] = useState<Partial<PacsServerConfig>>({});
 
-  // Track the most recent date found in PACS results
-  const [latestPacsDate, setLatestPacsDate] = useState<string>('');
-
   useEffect(() => {
     const loaded = PacsService.getServers();
     setServers(loaded);
@@ -102,23 +99,6 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     setIsAddingServer(false);
   }, [isOpen]);
 
-  /** Converts a PACS date string like "20260815" to "2026-08-15" */
-  const pacsDateToInput = (d: string): string => {
-    if (!d || d.length < 8) return '';
-    return `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}`;
-  };
-
-  /** Returns the effective "today" relative to PACS data */
-  const getPacsToday = (): Date => {
-    if (latestPacsDate && latestPacsDate.length === 8) {
-      const y = parseInt(latestPacsDate.slice(0, 4), 10);
-      const m = parseInt(latestPacsDate.slice(4, 6), 10) - 1;
-      const d = parseInt(latestPacsDate.slice(6, 8), 10);
-      return new Date(y, m, d);
-    }
-    return new Date();
-  };
-
   const setDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all') => {
     setActiveDatePreset(preset);
     const formatDate = (d: Date): string => {
@@ -128,34 +108,33 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
       return `${year}-${month}-${day}`;
     };
 
-    // Use PACS-relative date if we know the latest date in PACS
-    const refDate = getPacsToday();
+    const today = new Date();
 
     if (preset === 'today') {
-      const formatted = formatDate(refDate);
+      const formatted = formatDate(today);
       setDateFrom(formatted);
       setDateTo(formatted);
     } else if (preset === 'yesterday') {
-      const yest = new Date(refDate);
+      const yest = new Date(today);
       yest.setDate(yest.getDate() - 1);
       const formatted = formatDate(yest);
       setDateFrom(formatted);
       setDateTo(formatted);
     } else if (preset === 'week') {
-      const weekAgo = new Date(refDate);
+      const weekAgo = new Date(today);
       weekAgo.setDate(weekAgo.getDate() - 7);
       setDateFrom(formatDate(weekAgo));
-      setDateTo(formatDate(refDate));
+      setDateTo(formatDate(today));
     } else if (preset === 'month') {
-      const monthAgo = new Date(refDate);
+      const monthAgo = new Date(today);
       monthAgo.setDate(monthAgo.getDate() - 30);
       setDateFrom(formatDate(monthAgo));
-      setDateTo(formatDate(refDate));
+      setDateTo(formatDate(today));
     } else if (preset === 'year') {
-      const yearAgo = new Date(refDate);
+      const yearAgo = new Date(today);
       yearAgo.setFullYear(yearAgo.getFullYear() - 1);
       setDateFrom(formatDate(yearAgo));
-      setDateTo(formatDate(refDate));
+      setDateTo(formatDate(today));
     } else if (preset === 'all') {
       setDateFrom('');
       setDateTo('');
@@ -195,18 +174,8 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
       });
       setSearchResults(results);
 
-      // Track the most recent study date in results so presets work relative to PACS data
-      if (results.length > 0) {
-        const maxDate = results.reduce((best, r) =>
-          r.studyDate && r.studyDate > best ? r.studyDate : best, '');
-        if (maxDate) setLatestPacsDate(maxDate);
-      }
-
       if (results.length === 0 && (dateFrom || dateTo)) {
-        const hint = latestPacsDate
-          ? ` (Latest available: ${pacsDateToInput(latestPacsDate)} — press a date preset to update range)`
-          : ' — try "All Dates" or a wider range';
-        setStatusMessage(`No studies found for the selected date range.${hint}`);
+        setStatusMessage('No studies found for the selected date range. Try "All Dates" or a wider range.');
       } else {
         setStatusMessage(`Found ${results.length} studies from ${server.name}.`);
       }
