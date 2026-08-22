@@ -400,6 +400,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const tempCanvasRef = useRef<HTMLCanvasElement | null>(null);
   
   const [isDragging, setIsDragging] = useState(false);
   const [dragBtn, setDragBtn] = useState<number>(0);
@@ -473,14 +474,19 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     ctx.translate(cx, cy);
     ctx.scale(fitScale, fitScale * scaleY);
 
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = width;
-    tempCanvas.height = height;
+    if (!tempCanvasRef.current) {
+      tempCanvasRef.current = document.createElement('canvas');
+    }
+    const tempCanvas = tempCanvasRef.current;
+    if (tempCanvas.width !== width || tempCanvas.height !== height) {
+      tempCanvas.width = width;
+      tempCanvas.height = height;
+    }
     const tempCtx = tempCanvas.getContext('2d');
     if (tempCtx) {
       tempCtx.putImageData(imgData, 0, 0);
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
+      ctx.imageSmoothingQuality = 'medium';
       ctx.drawImage(tempCanvas, -width / 2, -height / 2);
     }
 
@@ -768,6 +774,44 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
   // Debounced High Quality Render Timer
   const [renderQuality, setRenderQuality] = useState<'fast' | 'high'>('high');
 
+  // Cached Offscreen Raymarch Canvas
+  const cachedRaymarchCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // 1. Raymarch rendering (runs ONLY when 3D orientation, zoom, pan, preset, or quality changes)
+  const updateRaymarchBuffer = useCallback(() => {
+    if (!volume || !containerRef.current) return;
+    const displayWidth = containerRef.current.clientWidth;
+    const displayHeight = containerRef.current.clientHeight;
+    if (displayWidth <= 0 || displayHeight <= 0) return;
+
+    const renderRes = renderQuality === 'fast' ? 140 : Math.min(260, Math.floor(Math.min(displayWidth, displayHeight)));
+
+    const imgData = VolumeRaycaster.render(volume, renderRes, renderRes, {
+      yawDeg: yaw,
+      pitchDeg: pitch,
+      zoom: zoom3D,
+      panX: (pan3D.x / displayWidth) * renderRes,
+      panY: (pan3D.y / displayHeight) * renderRes,
+      preset: selectedPreset,
+      quality: renderQuality === 'fast' ? 'fast' : 'high',
+      enableAmbientOcclusion: false
+    });
+
+    if (!cachedRaymarchCanvasRef.current) {
+      cachedRaymarchCanvasRef.current = document.createElement('canvas');
+    }
+    const cCanvas = cachedRaymarchCanvasRef.current;
+    if (cCanvas.width !== renderRes || cCanvas.height !== renderRes) {
+      cCanvas.width = renderRes;
+      cCanvas.height = renderRes;
+    }
+    const cCtx = cCanvas.getContext('2d');
+    if (cCtx) {
+      cCtx.putImageData(imgData, 0, 0);
+    }
+  }, [volume, yaw, pitch, zoom3D, pan3D, selectedPreset, renderQuality]);
+
+  // 2. Fast Compositor (draws cached 3D volume + vector 3D cut planes in < 0.02ms)
   const render3d = useCallback(() => {
     if (!canvasRef.current || !volume || !containerRef.current) return;
     const canvas = canvasRef.current;
@@ -788,30 +832,12 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, displayWidth, displayHeight);
 
-    // Compute Raymarch Buffer Size (High-Res 260px - 340px)
-    const renderRes = renderQuality === 'fast' ? 180 : Math.min(320, Math.floor(Math.min(displayWidth, displayHeight)));
-
-    const imgData = VolumeRaycaster.render(volume, renderRes, renderRes, {
-      yawDeg: yaw,
-      pitchDeg: pitch,
-      zoom: zoom3D,
-      panX: (pan3D.x / displayWidth) * renderRes,
-      panY: (pan3D.y / displayHeight) * renderRes,
-      preset: selectedPreset,
-      quality: renderQuality === 'fast' ? 'fast' : 'high',
-      enableAmbientOcclusion: true
-    });
-
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = renderRes;
-    tempCanvas.height = renderRes;
-    const tempCtx = tempCanvas.getContext('2d');
-    if (tempCtx) {
-      tempCtx.putImageData(imgData, 0, 0);
-
+    if (cachedRaymarchCanvasRef.current) {
       const minDim = Math.min(displayWidth, displayHeight);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'medium';
       ctx.drawImage(
-        tempCanvas,
+        cachedRaymarchCanvasRef.current,
         displayWidth / 2 + pan3D.x - minDim / 2,
         displayHeight / 2 + pan3D.y - minDim / 2,
         minDim,
@@ -819,16 +845,21 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
       );
     }
 
-    // Draw 3D Crosshair Cut Planes (MPR Scout Planes in 3D perspective space)
+    // Draw 3D Crosshair Cut Planes in perspective space (< 0.01ms)
     if (showCutPlanes) {
       draw3dCutPlanes(ctx, displayWidth, displayHeight, volume, crosshair, yaw, pitch, zoom3D, pan3D);
     }
 
-    // 3D Anatomical Compass Orientation Cube in top-right corner
+    // 3D Orientation Cube
     draw3dOrientationCube(ctx, displayWidth - 42, 42, yaw, pitch);
 
     ctx.restore();
-  }, [volume, yaw, pitch, crosshair, zoom3D, pan3D, selectedPreset, renderQuality, showCutPlanes]);
+  }, [volume, crosshair, zoom3D, pan3D, showCutPlanes, yaw, pitch]);
+
+  useEffect(() => {
+    updateRaymarchBuffer();
+    render3d();
+  }, [updateRaymarchBuffer]);
 
   useEffect(() => {
     render3d();

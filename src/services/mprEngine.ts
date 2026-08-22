@@ -163,9 +163,7 @@ export class MprEngine {
         }
       } else {
         const offset = targetZ * sliceSize;
-        for (let i = 0; i < sliceSize; i++) {
-          sliceHu[i] = data[offset + i];
-        }
+        sliceHu.set(data.subarray(offset, offset + sliceSize));
       }
 
       return {
