@@ -403,6 +403,9 @@ export const App: React.FC = () => {
       else if (e.key === '5') handleApplyWindowPreset(50, 350); // CT Mediastinum
       else if (e.key === '6') handleApplyWindowPreset(60, 400); // CT Abdomen
       else if (e.key === '7') handleApplyWindowPreset(300, 600); // Angio
+      else if (e.key === '8') handleApplyWindowPreset(350, 700); // MRI T1
+      else if (e.key === '9') handleApplyWindowPreset(600, 1200); // MRI T2
+      else if (e.key === '0') handleApplyWindowPreset(128, 256); // Full Dynamic Range
       else if (e.key.toLowerCase() === 'w') setActiveTool('ww_wl');
       else if (e.key.toLowerCase() === 'z') setActiveTool('zoom');
       else if (e.key.toLowerCase() === 'p') setActiveTool('pan');
@@ -511,6 +514,8 @@ export const App: React.FC = () => {
         onOpen3D={() => setIs3dModalOpen(true)}
         isCinePlaying={currentViewport.cinePlaying}
         onToggleCine={() => updateActiveViewport({ cinePlaying: !currentViewport.cinePlaying })}
+        currentWindowCenter={currentViewport.windowCenter}
+        currentWindowWidth={currentViewport.windowWidth}
         onApplyWindowPreset={handleApplyWindowPreset}
         onClearMeasurements={handleClearMeasurements}
         onOpenPacs={() => setIsPacsModalOpen(true)}

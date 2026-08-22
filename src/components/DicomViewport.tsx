@@ -139,17 +139,9 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
                  currentInstance.rawTags['(0008,0060)']?.value === 'CT' || 
                  series?.modality === 'CT';
 
-    // Use currentInstance calibrated window levels when viewportState has generic default or mismatched modality
-    let wc = viewportState.windowCenter;
-    let ww = Math.max(1, viewportState.windowWidth);
-
-    if (isCt && (wc > 800 || wc < -900 || ww > 2500 || (wc === 2048 && ww === 4096))) {
-      wc = currentInstance.windowCenter !== undefined ? currentInstance.windowCenter : 40;
-      ww = currentInstance.windowWidth !== undefined ? currentInstance.windowWidth : 400;
-    } else if (!isCt && (wc === 40 && ww === 400) && (currentInstance.windowCenter !== 40 || currentInstance.windowWidth !== 400)) {
-      wc = currentInstance.windowCenter;
-      ww = currentInstance.windowWidth;
-    }
+    // Window Center and Window Width from viewport state
+    const wc = viewportState.windowCenter;
+    const ww = Math.max(1, viewportState.windowWidth);
 
     const low = wc - 0.5 - (ww - 1) / 2;
     const high = wc - 0.5 + (ww - 1) / 2;
