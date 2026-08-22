@@ -29,7 +29,6 @@ interface MenuBarProps {
   onOpenDicomDir: () => void;
   onOpenPacs: () => void;
   onOpenExport: () => void;
-  onLoadSamples: () => void;
   onClearMeasurements: () => void;
   onSelectTool: (tool: ToolType) => void;
   onApplyWindowPreset: (wc: number, ww: number) => void;
@@ -49,7 +48,6 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onOpenDicomDir,
   onOpenPacs,
   onOpenExport,
-  onLoadSamples,
   onClearMeasurements,
   onSelectTool,
   onApplyWindowPreset,
@@ -136,15 +134,6 @@ export const MenuBar: React.FC<MenuBarProps> = ({
                 <span>PACS Search (C-FIND / WADO)...</span>
               </div>
               <span className="text-[10px] text-slate-500 font-mono">Ctrl+P</span>
-            </button>
-            <button
-              onClick={() => executeAndClose(onLoadSamples)}
-              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center justify-between text-cyan-300"
-            >
-              <div className="flex items-center gap-2">
-                <Activity className="w-3.5 h-3.5" />
-                <span>Load Sample Studies</span>
-              </div>
             </button>
             <div className="my-1 border-t border-radiant-border"></div>
             <button

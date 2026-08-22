@@ -21,7 +21,6 @@ interface HeaderBarProps {
   onOpenDicomDir: () => void;
   onOpenTags: () => void;
   onOpenExport: () => void;
-  onLoadSamples: () => void;
   onOpenFileClick: () => void;
   onOpenFolderClick: () => void;
   isFullscreen: boolean;
@@ -34,7 +33,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenDicomDir,
   onOpenTags,
   onOpenExport,
-  onLoadSamples,
   onOpenFileClick,
   onOpenFolderClick,
   isFullscreen,
@@ -92,16 +90,6 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         >
           <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
           <span>Open Folder</span>
-        </button>
-
-        {/* Load Sample Studies */}
-        <button
-          onClick={onLoadSamples}
-          title="Load Sample CT, MRI, and X-Ray Studies"
-          className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-emerald-700 to-teal-700 hover:from-emerald-600 hover:to-teal-600 text-white rounded shadow-sm font-semibold transition-all border border-emerald-500/50"
-        >
-          <RefreshCw className="w-3.5 h-3.5 text-emerald-200" />
-          <span>Load Samples</span>
         </button>
 
         {/* PACS Query Modal */}

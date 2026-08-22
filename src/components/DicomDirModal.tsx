@@ -3,7 +3,6 @@ import { Disc, FolderOpen, CheckCircle2, AlertCircle, X, HardDrive, RefreshCw } 
 import { DicomStudy } from '../types/dicom';
 import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from '../services/dicomParser';
 import { parseDicomDirBuffer } from '../services/dicomdirParser';
-import { generateSampleStudies } from '../services/sampleDataGenerator';
 
 interface DicomDirModalProps {
   isOpen: boolean;
@@ -34,7 +33,6 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
     setProgressPercent(0);
 
     const instances: any[] = [];
-    let isDicomDirFound = false;
     const total = files.length;
     const chunkSize = 25;
 
@@ -44,28 +42,23 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
       for (let j = i; j < chunkEnd; j++) {
         const file = files[j];
         try {
-          if (file.size < 128) continue;
           const buffer = await file.arrayBuffer();
 
-          if (file.name.toUpperCase() === 'DICOMDIR') {
-            isDicomDirFound = true;
-            try {
-              parseDicomDirBuffer(buffer);
-            } catch (e) {}
+          if (file.name.toUpperCase() === 'DICOMDIR' || file.name.toUpperCase().endsWith('DICOMDIR')) {
+            const parsed = parseDicomDirBuffer(buffer);
+            console.log('DICOMDIR parsed:', parsed);
           }
 
-          if (
-            isDicomBuffer(buffer) ||
-            file.name.toLowerCase().endsWith('.dcm') ||
-            file.name.toLowerCase().endsWith('.ima') ||
-            file.name.toLowerCase().endsWith('.dicom')
-          ) {
-            try {
-              const inst = parseDicomBufferFast(buffer, file.name);
+          if (isDicomBuffer(buffer)) {
+            const inst = parseDicomBufferFast(buffer, file.name);
+            if (inst) {
+              inst.filePath = (file as any).path || file.name;
               instances.push(inst);
-            } catch (parseErr) {}
+            }
           }
-        } catch (err) {}
+        } catch (err) {
+          // non-dicom file
+        }
       }
 
       const percent = Math.round((chunkEnd / total) * 100);
@@ -79,15 +72,6 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
       onStudiesLoaded(grouped);
       setStatusMessage(`Loaded ${grouped.length} study (${instances.length} images) successfully!`);
       setTimeout(() => onClose(), 600);
-    } else if (isDicomDirFound) {
-      const samples = generateSampleStudies();
-      samples.forEach(s => {
-        s.source = 'disc';
-        s.sourceName = 'DICOMDIR Media';
-      });
-      onStudiesLoaded(samples);
-      setStatusMessage('DICOMDIR parsed and opened successfully!');
-      setTimeout(() => onClose(), 600);
     } else {
       setStatusMessage('No valid DICOM imaging files were recognized in this folder.');
     }
@@ -95,70 +79,9 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
     setIsReading(false);
   };
 
-  // Handle native Electron folder reading with smooth chunking
-  const handleNativeFolderSelect = async () => {
-    if (window.electronAPI?.openDicomDirectory) {
-      setIsReading(true);
-      setStatusMessage('Opening native folder picker...');
-      try {
-        const fileEntries = await window.electronAPI.openDicomDirectory();
-        if (fileEntries.length > 0) {
-          const total = fileEntries.length;
-          const instances: any[] = [];
-          const chunkSize = 30;
-
-          for (let i = 0; i < total; i += chunkSize) {
-            const chunkEnd = Math.min(i + chunkSize, total);
-
-            for (let j = i; j < chunkEnd; j++) {
-              const entry = fileEntries[j];
-              try {
-                if (isDicomBuffer(entry.buffer)) {
-                  const inst = parseDicomBufferFast(entry.buffer, entry.fileName, entry.filePath);
-                  instances.push(inst);
-                }
-              } catch (e) {}
-            }
-
-            const percent = Math.round((chunkEnd / total) * 100);
-            setProgressPercent(percent);
-            setStatusMessage(`Processed ${instances.length} / ${total} files (${percent}%)...`);
-            await new Promise(resolve => setTimeout(resolve, 0));
-          }
-
-          if (instances.length > 0) {
-            const grouped = groupInstancesIntoStudies(instances, 'disc', 'USB Flash Drive / Disc');
-            onStudiesLoaded(grouped);
-            setStatusMessage(`Loaded ${grouped.length} study (${instances.length} images) successfully!`);
-            setTimeout(() => onClose(), 600);
-            return;
-          }
-        }
-      } catch (err) {
-        console.warn('Native folder select error:', err);
-      } finally {
-        setIsReading(false);
-      }
-    }
-
+  // Open native Folder / Disc dialog
+  const handleSelectDrive = () => {
     folderInputRef.current?.click();
-  };
-
-  // Simulate CD/DVD hospital disc insertion
-  const handleSimulateHospitalDisc = () => {
-    setIsReading(true);
-    setStatusMessage('Detecting optical disc drive and loading DICOM_VOL01...');
-    setTimeout(() => {
-      const samples = generateSampleStudies();
-      samples.forEach(s => {
-        s.source = 'disc';
-        s.sourceName = 'CD-ROM: DICOM_VOL01';
-      });
-      onStudiesLoaded(samples);
-      setStatusMessage('CD/DVD disc detected and study loaded!');
-      setTimeout(() => onClose(), 700);
-      setIsReading(false);
-    }, 800);
   };
 
   return (
@@ -189,7 +112,7 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
           <div className="grid grid-cols-2 gap-3">
             {/* CD/DVD Reading */}
             <div
-              onClick={handleSimulateHospitalDisc}
+              onClick={handleSelectDrive}
               className="p-4 bg-radiant-card hover:bg-radiant-hover border border-radiant-border hover:border-amber-500/60 rounded-xl cursor-pointer transition-all flex flex-col items-center text-center group"
             >
               <div className="w-12 h-12 rounded-full bg-amber-500/20 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">
@@ -199,13 +122,13 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
                 Optical Disc Drive (CD / DVD)
               </h4>
               <p className="text-[11px] text-slate-400">
-                Directly read hospital CD/DVD disc media
+                Select and scan hospital CD/DVD disc folder
               </p>
             </div>
 
             {/* USB Flash / Folder */}
             <div
-              onClick={handleNativeFolderSelect}
+              onClick={handleSelectDrive}
               className="p-4 bg-radiant-card hover:bg-radiant-hover border border-radiant-border hover:border-cyan-500/60 rounded-xl cursor-pointer transition-all flex flex-col items-center text-center group"
             >
               <div className="w-12 h-12 rounded-full bg-cyan-500/20 flex items-center justify-center mb-3 group-hover:scale-110 transition-transform">

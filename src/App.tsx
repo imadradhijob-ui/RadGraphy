@@ -22,7 +22,6 @@ import {
   ToolType,
   ViewportState
 } from './types/dicom';
-import { generateSampleStudies } from './services/sampleDataGenerator';
 import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './services/dicomParser';
 import { Loader2 } from 'lucide-react';
 
@@ -91,15 +90,6 @@ export const App: React.FC = () => {
       measurements: []
     }));
   });
-
-  // Load sample studies on initial startup
-  useEffect(() => {
-    const samples = generateSampleStudies();
-    setStudies(samples);
-    if (samples.length > 0) {
-      handleSelectStudy(samples[0]);
-    }
-  }, []);
 
   const activeStudy = studies.find(s => s.studyInstanceUid === activeStudyUid) || studies[0] || null;
   const activeSeries = activeStudy?.series.find(s => s.seriesInstanceUid === activeSeriesUid) || activeStudy?.series[0] || null;
@@ -376,12 +366,6 @@ export const App: React.FC = () => {
         onOpenDicomDir={() => setIsDicomDirModalOpen(true)}
         onOpenTags={() => setIsTagModalOpen(true)}
         onOpenExport={() => setIsExportModalOpen(true)}
-        onLoadSamples={() => {
-          const samples = generateSampleStudies();
-          setStudies(samples);
-          handleSelectStudy(samples[0]);
-          showNotification('Sample studies loaded successfully.');
-        }}
         onOpenFileClick={handleOpenFile}
         onOpenFolderClick={handleOpenFolder}
         isFullscreen={isFullscreen}
@@ -395,12 +379,6 @@ export const App: React.FC = () => {
         onOpenDicomDir={() => setIsDicomDirModalOpen(true)}
         onOpenPacs={() => setIsPacsModalOpen(true)}
         onOpenExport={() => setIsExportModalOpen(true)}
-        onLoadSamples={() => {
-          const samples = generateSampleStudies();
-          setStudies(samples);
-          handleSelectStudy(samples[0]);
-          showNotification('Sample studies loaded successfully.');
-        }}
         onClearMeasurements={handleClearMeasurements}
         onSelectTool={setActiveTool}
         onApplyWindowPreset={handleApplyWindowPreset}

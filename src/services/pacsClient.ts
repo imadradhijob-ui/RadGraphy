@@ -1,5 +1,4 @@
 import { DicomInstance, DicomStudy, ModalityType, PacsSearchResult, PacsServerConfig } from '../types/dicom';
-import { generateSampleStudies } from './sampleDataGenerator';
 import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './dicomParser';
 import { LocalDicomCache } from './localDicomCache';
 
