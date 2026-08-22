@@ -21,6 +21,8 @@ function createWindow() {
       contextIsolation: true,
       webSecurity: false
     }
+  });
+
   mainWindow.setMenu(null);
   mainWindow.setAutoHideMenuBar(true);
   mainWindow.setMenuBarVisibility(false);
