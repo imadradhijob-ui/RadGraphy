@@ -16,7 +16,15 @@ import {
   Edit2,
   Save,
   Sliders,
-  Settings2
+  Settings2,
+  RotateCcw,
+  Filter,
+  Wifi,
+  CalendarRange,
+  User,
+  Hash,
+  FileText,
+  ArrowRight
 } from 'lucide-react';
 import { DicomStudy, PacsSearchResult, PacsServerConfig } from '../types/dicom';
 import { PacsService } from '../services/pacsClient';
@@ -111,7 +119,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     return new Date();
   };
 
-  const setDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'all') => {
+  const setDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all') => {
     setActiveDatePreset(preset);
     const formatDate = (d: Date): string => {
       const year = d.getFullYear();
@@ -138,10 +146,31 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
       weekAgo.setDate(weekAgo.getDate() - 7);
       setDateFrom(formatDate(weekAgo));
       setDateTo(formatDate(refDate));
+    } else if (preset === 'month') {
+      const monthAgo = new Date(refDate);
+      monthAgo.setDate(monthAgo.getDate() - 30);
+      setDateFrom(formatDate(monthAgo));
+      setDateTo(formatDate(refDate));
+    } else if (preset === 'year') {
+      const yearAgo = new Date(refDate);
+      yearAgo.setFullYear(yearAgo.getFullYear() - 1);
+      setDateFrom(formatDate(yearAgo));
+      setDateTo(formatDate(refDate));
     } else if (preset === 'all') {
       setDateFrom('');
       setDateTo('');
     }
+  };
+
+  const handleResetFilters = () => {
+    setPatientName('');
+    setPatientId('');
+    setAccessionNumber('');
+    setModality('ALL');
+    setDateFrom('');
+    setDateTo('');
+    setActiveDatePreset('all');
+    setStatusMessage('Filters reset. Ready to query PACS.');
   };
 
   if (!isOpen) return null;
@@ -296,7 +325,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 select-none">
-      <div className="bg-radiant-panel border border-radiant-border rounded-xl shadow-2xl w-full max-w-5xl h-[680px] flex flex-col overflow-hidden text-xs text-slate-200">
+      <div className="bg-radiant-panel border border-radiant-border rounded-xl shadow-2xl w-full max-w-5xl h-[740px] max-h-[92vh] flex flex-col overflow-hidden text-xs text-slate-200">
         {/* Modal Header */}
         <div className="h-12 bg-radiant-darkest border-b border-radiant-border px-4 flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-sm text-cyan-400">
@@ -359,16 +388,16 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
         {activeTab === 'search' && (
           <div className="flex-1 flex flex-col p-4 overflow-hidden gap-3">
             {/* Server Selector & Search Controls Card */}
-            <div className="bg-radiant-card border border-radiant-border rounded-lg p-3 space-y-3">
-              {/* Server Dropdown Row */}
-              <div className="flex items-center justify-between gap-3 border-b border-radiant-border/60 pb-2">
-                <div className="flex items-center gap-2 flex-1">
-                  <Database className="w-4 h-4 text-cyan-400" />
-                  <label className="font-semibold text-slate-300">Target PACS Server:</label>
+            <div className="bg-radiant-card border border-radiant-border rounded-xl p-3.5 space-y-3 shadow-lg">
+              {/* Row 1: Target PACS Server & Connection Status */}
+              <div className="flex flex-wrap items-center justify-between gap-3 bg-radiant-darkest/70 border border-radiant-border/80 rounded-lg px-3 py-2">
+                <div className="flex items-center gap-2.5 flex-1 min-w-[280px]">
+                  <Database className="w-4 h-4 text-cyan-400 shrink-0" />
+                  <label className="font-semibold text-slate-200 text-xs shrink-0">PACS Node:</label>
                   <select
                     value={selectedServerId}
                     onChange={(e) => setSelectedServerId(e.target.value)}
-                    className="bg-radiant-darkest border border-radiant-border rounded px-2.5 py-1 text-slate-100 font-semibold focus:border-cyan-500 focus:outline-none flex-1 max-w-xs"
+                    className="bg-radiant-panel border border-radiant-border rounded-md px-3 py-1.5 text-slate-100 font-semibold focus:border-cyan-400 focus:outline-none flex-1 max-w-sm text-xs shadow-inner cursor-pointer"
                   >
                     {servers.map((s) => (
                       <option key={s.id} value={s.id}>
@@ -379,141 +408,221 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                 </div>
 
                 {currentSelectedServer && (
-                  <div className="flex items-center gap-3 text-[11px] font-mono text-slate-400">
-                    <span>Host: <strong className="text-slate-200">{currentSelectedServer.host}:{currentSelectedServer.port}</strong></span>
-                    <span>•</span>
-                    <span>Called AE: <strong className="text-cyan-300">{currentSelectedServer.aeTitle}</strong></span>
-                    <span>•</span>
-                    <span>Calling AE: <strong className="text-amber-300">{currentSelectedServer.callingAeTitle}</strong></span>
-                    <span>•</span>
-                    <span>C-STORE Port: <strong className="text-emerald-300">{currentSelectedServer.cStorePort || 11112}</strong></span>
+                  <div className="flex items-center gap-2">
+                    <div className="hidden md:flex items-center gap-2 px-2.5 py-1 bg-slate-900/80 border border-slate-800 rounded text-[11px] font-mono text-slate-300">
+                      <span><span className="text-slate-500">Host:</span> <strong className="text-slate-200">{currentSelectedServer.host}:{currentSelectedServer.port}</strong></span>
+                      <span className="text-slate-600">|</span>
+                      <span><span className="text-slate-500">Called:</span> <strong className="text-cyan-300">{currentSelectedServer.aeTitle}</strong></span>
+                      <span className="text-slate-600">|</span>
+                      <span><span className="text-slate-500">Calling:</span> <strong className="text-amber-300">{currentSelectedServer.callingAeTitle}</strong></span>
+                    </div>
+
+                    {/* Test Ping Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleTestEcho(currentSelectedServer)}
+                      disabled={isTestingEcho === currentSelectedServer.id}
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-cyan-500 rounded text-[11px] font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                      title="Send DICOM C-ECHO verification ping"
+                    >
+                      <Wifi className={`w-3.5 h-3.5 ${isTestingEcho === currentSelectedServer.id ? 'animate-pulse text-amber-400' : 'text-emerald-400'}`} />
+                      <span>{isTestingEcho === currentSelectedServer.id ? 'Pinging...' : 'C-ECHO'}</span>
+                    </button>
+
+                    {echoResult[currentSelectedServer.id] && (
+                      <span className={`text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${
+                        echoResult[currentSelectedServer.id].success
+                          ? 'bg-emerald-950/60 text-emerald-300 border-emerald-500/40'
+                          : 'bg-rose-950/60 text-rose-300 border-rose-500/40'
+                      }`}>
+                        {echoResult[currentSelectedServer.id].success ? '✓ Echo OK' : '✗ Failed'}
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Filters Grid */}
-              <div className="grid grid-cols-12 gap-2.5 items-end">
-                <div className="col-span-3">
-                  <label className="text-[11px] text-slate-400 block mb-1 font-medium">Patient Name:</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. Ali mohan or AL-SAADI*"
-                    value={patientName}
-                    onChange={(e) => setPatientName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    className="w-full bg-radiant-darkest border border-radiant-border rounded px-2 py-1 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
-                  />
+              {/* Row 2: Search Filters (Patient Name, Patient ID, Accession, Modality) */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                {/* Patient Name */}
+                <div className="md:col-span-4">
+                  <label className="text-[11px] text-slate-300 flex items-center gap-1 mb-1 font-medium">
+                    <User className="w-3 h-3 text-cyan-400" />
+                    <span>Patient Name</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="e.g. Ali mohan or AL-SAADI*"
+                      value={patientName}
+                      onChange={(e) => setPatientName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                      className="w-full bg-radiant-darkest border border-radiant-border rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 focus:outline-none transition-all shadow-inner"
+                    />
+                    {patientName && (
+                      <button
+                        type="button"
+                        onClick={() => setPatientName('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="col-span-2">
-                  <label className="text-[11px] text-slate-400 block mb-1 font-medium">Patient ID:</label>
-                  <input
-                    type="text"
-                    placeholder="e.g. 566203 or PAT*"
-                    value={patientId}
-                    onChange={(e) => setPatientId(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    className="w-full bg-radiant-darkest border border-radiant-border rounded px-2 py-1 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
-                  />
+                {/* Patient ID */}
+                <div className="md:col-span-3">
+                  <label className="text-[11px] text-slate-300 flex items-center gap-1 mb-1 font-medium">
+                    <Hash className="w-3 h-3 text-amber-400" />
+                    <span>Patient ID</span>
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="e.g. 566203 or PAT*"
+                      value={patientId}
+                      onChange={(e) => setPatientId(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                      className="w-full bg-radiant-darkest border border-radiant-border rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 focus:outline-none transition-all shadow-inner font-mono"
+                    />
+                    {patientId && (
+                      <button
+                        type="button"
+                        onClick={() => setPatientId('')}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 p-0.5"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
-                <div className="col-span-1">
-                  <label className="text-[11px] text-slate-400 block mb-1 font-medium">Modality:</label>
-                  <select
-                    value={modality}
-                    onChange={(e) => setModality(e.target.value)}
-                    className="w-full bg-radiant-darkest border border-radiant-border rounded px-1.5 py-1 text-xs text-slate-100 focus:border-cyan-500 focus:outline-none"
-                  >
-                    <option value="ALL">ALL</option>
-                    <option value="CT">CT</option>
-                    <option value="MR">MR</option>
-                    <option value="DX">DX / CR</option>
-                    <option value="US">US</option>
-                    <option value="XA">XA</option>
-                    <option value="MG">MG</option>
-                  </select>
-                </div>
-
-                <div className="col-span-2">
-                  <label className="text-[11px] text-slate-400 block mb-1 font-medium">Accession #:</label>
+                {/* Accession Number */}
+                <div className="md:col-span-3">
+                  <label className="text-[11px] text-slate-300 flex items-center gap-1 mb-1 font-medium">
+                    <FileText className="w-3 h-3 text-purple-400" />
+                    <span>Accession Number</span>
+                  </label>
                   <input
                     type="text"
-                    placeholder="e.g. ACC-*"
+                    placeholder="e.g. ACC-2026-*"
                     value={accessionNumber}
                     onChange={(e) => setAccessionNumber(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                    className="w-full bg-radiant-darkest border border-radiant-border rounded px-2 py-1 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-500 focus:outline-none"
+                    className="w-full bg-radiant-darkest border border-radiant-border rounded-lg px-2.5 py-1.5 text-xs text-slate-100 placeholder-slate-600 focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/30 focus:outline-none transition-all shadow-inner font-mono"
                   />
                 </div>
 
-                {/* Date Presets */}
-                <div className="col-span-2 grid grid-cols-4 gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setDatePreset('today')}
-                    title="Today's PACS studies"
-                    className={`px-1 py-1.5 rounded font-semibold text-[10px] transition-colors border text-center ${
-                      activeDatePreset === 'today'
-                        ? 'bg-cyan-600/30 text-cyan-300 border-cyan-500'
-                        : 'bg-radiant-darkest text-slate-300 border-radiant-border hover:bg-radiant-hover'
-                    }`}
+                {/* Modality */}
+                <div className="md:col-span-2">
+                  <label className="text-[11px] text-slate-300 flex items-center gap-1 mb-1 font-medium">
+                    <Filter className="w-3 h-3 text-emerald-400" />
+                    <span>Modality</span>
+                  </label>
+                  <select
+                    value={modality}
+                    onChange={(e) => setModality(e.target.value)}
+                    className="w-full bg-radiant-darkest border border-radiant-border rounded-lg px-2.5 py-1.5 text-xs text-slate-100 focus:border-cyan-400 focus:outline-none font-semibold cursor-pointer shadow-inner"
                   >
-                    Today
-                  </button>
+                    <option value="ALL">ALL (Any)</option>
+                    <option value="CT">CT (Computed Tomography)</option>
+                    <option value="MR">MR (Magnetic Resonance)</option>
+                    <option value="DX">DX / CR (Digital X-Ray)</option>
+                    <option value="US">US (Ultrasound)</option>
+                    <option value="XA">XA (Angiography)</option>
+                    <option value="MG">MG (Mammography)</option>
+                    <option value="NM">NM (Nuclear Medicine)</option>
+                    <option value="PT">PT (PET Scan)</option>
+                    <option value="OT">OT (Other)</option>
+                  </select>
+                </div>
+              </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setDatePreset('yesterday')}
-                    title="Yesterday's studies"
-                    className={`px-1 py-1.5 rounded font-semibold text-[10px] transition-colors border text-center ${
-                      activeDatePreset === 'yesterday'
-                        ? 'bg-cyan-600/30 text-cyan-300 border-cyan-500'
-                        : 'bg-radiant-darkest text-slate-300 border-radiant-border hover:bg-radiant-hover'
-                    }`}
-                  >
-                    Yesterday
-                  </button>
+              {/* Row 3: Date Range Filter & Query Actions */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-radiant-border/60">
+                {/* Date Controls (Presets & Range Pickers) */}
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <div className="flex items-center gap-1 text-[11px] font-semibold text-slate-300">
+                    <Calendar className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Date Range:</span>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setDatePreset('week')}
-                    title="Last 7 days"
-                    className={`px-1 py-1.5 rounded font-semibold text-[10px] transition-colors border text-center ${
-                      activeDatePreset === 'week'
-                        ? 'bg-cyan-600/30 text-cyan-300 border-cyan-500'
-                        : 'bg-radiant-darkest text-slate-300 border-radiant-border hover:bg-radiant-hover'
-                    }`}
-                  >
-                    7 Days
-                  </button>
+                  {/* Preset Pills */}
+                  <div className="flex items-center bg-radiant-darkest border border-radiant-border rounded-lg p-0.5 gap-0.5">
+                    {[
+                      { id: 'all', label: 'All Dates' },
+                      { id: 'today', label: 'Today' },
+                      { id: 'yesterday', label: 'Yesterday' },
+                      { id: 'week', label: '7 Days' },
+                      { id: 'month', label: '30 Days' },
+                      { id: 'year', label: '1 Year' }
+                    ].map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setDatePreset(p.id as any)}
+                        className={`px-2.5 py-1 rounded-md text-[11px] font-medium transition-all ${
+                          activeDatePreset === p.id
+                            ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white font-bold shadow-sm'
+                            : 'text-slate-400 hover:text-slate-200 hover:bg-radiant-hover'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setDatePreset('all')}
-                    title="All Dates (No filter)"
-                    className={`px-1 py-1.5 rounded font-semibold text-[10px] transition-colors border text-center ${
-                      activeDatePreset === 'all'
-                        ? 'bg-slate-700 text-cyan-300 border-cyan-400'
-                        : 'bg-radiant-darkest text-slate-400 border-radiant-border hover:bg-radiant-hover'
-                    }`}
-                  >
-                    All
-                  </button>
+                  {/* From & To Custom Date Inputs */}
+                  <div className="flex items-center gap-1.5 bg-radiant-darkest border border-radiant-border rounded-lg px-2.5 py-1">
+                    <span className="text-[11px] text-slate-400 font-medium">From:</span>
+                    <input
+                      type="date"
+                      value={dateFrom}
+                      onChange={(e) => {
+                        setDateFrom(e.target.value);
+                        setActiveDatePreset('custom');
+                      }}
+                      className="bg-transparent border-0 text-slate-200 text-xs focus:outline-none font-mono cursor-pointer"
+                    />
+                    <span className="text-slate-500 font-bold">→</span>
+                    <span className="text-[11px] text-slate-400 font-medium">To:</span>
+                    <input
+                      type="date"
+                      value={dateTo}
+                      onChange={(e) => {
+                        setDateTo(e.target.value);
+                        setActiveDatePreset('custom');
+                      }}
+                      className="bg-transparent border-0 text-slate-200 text-xs focus:outline-none font-mono cursor-pointer"
+                    />
+                  </div>
                 </div>
 
-                {/* Query Search Button */}
-                <div className="col-span-2">
+                {/* Main Action Buttons */}
+                <div className="flex items-center gap-2">
                   <button
+                    type="button"
+                    onClick={handleResetFilters}
+                    className="h-9 px-3 bg-radiant-darkest hover:bg-radiant-hover text-slate-300 hover:text-white border border-radiant-border rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+                    title="Reset all search fields and date range"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Reset</span>
+                  </button>
+
+                  <button
+                    type="button"
                     onClick={handleSearch}
                     disabled={isSearching}
-                    className="w-full h-8 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded font-bold flex items-center justify-center gap-1.5 transition-colors shadow-md"
+                    className="h-9 px-5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 disabled:opacity-50 text-white rounded-lg font-bold text-xs flex items-center gap-2 transition-all shadow-md shadow-cyan-900/30 border border-cyan-400/40 cursor-pointer active:scale-95"
                   >
                     {isSearching ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <RefreshCw className="w-4 h-4 animate-spin text-cyan-200" />
                     ) : (
-                      <Search className="w-3.5 h-3.5" />
+                      <Search className="w-4 h-4 text-cyan-200" />
                     )}
-                    <span>Query PACS</span>
+                    <span>{isSearching ? 'Querying PACS...' : 'Query PACS'}</span>
                   </button>
                 </div>
               </div>
