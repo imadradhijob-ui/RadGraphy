@@ -180,7 +180,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   return (
     <div
       ref={toolbarRef}
-      className="h-14 bg-radiant-panel border-b border-radiant-border flex items-center px-2 gap-1 relative z-50 select-none shrink-0 overflow-x-auto overflow-y-visible justify-between"
+      className="h-14 bg-radiant-panel border-b border-radiant-border flex items-center px-2 gap-1 relative z-50 select-none shrink-0 overflow-visible justify-between"
     >
       <div className="flex items-center gap-1 overflow-visible">
         {/* 1. Primary Navigation Tools (Windowing, Pan, Zoom, Loupe) */}
