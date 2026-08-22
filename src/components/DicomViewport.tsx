@@ -737,8 +737,10 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             isFinished: true
           };
 
-          if (activeTool === 'rectangle_roi' || activeTool === 'ellipse_roi') {
+          if (activeTool === 'rectangle_roi') {
             measurement.roiValues = calculateRectangleRoi(p1, p2, currentInstance);
+          } else if (activeTool === 'ellipse_roi') {
+            measurement.roiValues = calculateEllipseRoi(p1, p2, currentInstance);
           }
 
           onAddMeasurement(measurement);
