@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { DicomSeries, DicomStudy, MprPlane, Point2D } from '../types/dicom';
 import { MprEngine, Volume3D, ProjectionMode } from '../services/mprEngine';
+import { VolumeRaycaster, VOLUME_3D_PRESETS, Volume3dPreset } from '../services/volumeRaycaster';
 import { DEFAULT_WINDOW_PRESETS } from '../services/windowPresets';
 
 interface MprViewportViewProps {
@@ -724,7 +725,8 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
 };
 
 /**
- * 3D Raymarched Volume Render & Orientation Scout Viewport
+ * Enhanced Photorealistic 3D Raymarched Volume Render & Orientation Scout Viewport
+ * Features Studio Specular Lighting, Trilinear Interpolation, 3D MPR Slice Cut Planes, and Presets.
  */
 interface Mpr3dVolumeViewportProps {
   volume: Volume3D | null;
@@ -747,10 +749,24 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const [selectedPreset, setSelectedPreset] = useState<Volume3dPreset>(VOLUME_3D_PRESETS[0]); // Bone default
+  const [showPresetsMenu, setShowPresetsMenu] = useState(false);
+  const [showCutPlanes, setShowCutPlanes] = useState(true);
+
+  // 3D Pan & Zoom
+  const [zoom3D, setZoom3D] = useState(1.0);
+  const [pan3D, setPan3D] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
   const [isDragging, setIsDragging] = useState(false);
+  const [dragBtn, setDragBtn] = useState<number>(0);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [initYaw, setInitYaw] = useState(yaw);
   const [initPitch, setInitPitch] = useState(pitch);
+  const [initPan, setInitPan] = useState({ x: 0, y: 0 });
+
+  // Debounced High Quality Render Timer
+  const [renderQuality, setRenderQuality] = useState<'fast' | 'high'>('high');
 
   const render3d = useCallback(() => {
     if (!canvasRef.current || !volume || !containerRef.current) return;
@@ -758,10 +774,11 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const dpr = window.devicePixelRatio || 1;
     const displayWidth = containerRef.current.clientWidth;
     const displayHeight = containerRef.current.clientHeight;
+    if (displayWidth <= 0 || displayHeight <= 0) return;
 
+    const dpr = window.devicePixelRatio || 1;
     if (canvas.width !== displayWidth * dpr || canvas.height !== displayHeight * dpr) {
       canvas.width = displayWidth * dpr;
       canvas.height = displayHeight * dpr;
@@ -771,29 +788,47 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, displayWidth, displayHeight);
 
-    // Fast 3D Raymarch Render
-    const imgData = MprEngine.render3dVolumeMIP(volume, yaw, pitch, 180, 180);
+    // Compute Raymarch Buffer Size (High-Res 260px - 340px)
+    const renderRes = renderQuality === 'fast' ? 180 : Math.min(320, Math.floor(Math.min(displayWidth, displayHeight)));
+
+    const imgData = VolumeRaycaster.render(volume, renderRes, renderRes, {
+      yawDeg: yaw,
+      pitchDeg: pitch,
+      zoom: zoom3D,
+      panX: (pan3D.x / displayWidth) * renderRes,
+      panY: (pan3D.y / displayHeight) * renderRes,
+      preset: selectedPreset,
+      quality: renderQuality === 'fast' ? 'fast' : 'high',
+      enableAmbientOcclusion: true
+    });
+
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = 180;
-    tempCanvas.height = 180;
+    tempCanvas.width = renderRes;
+    tempCanvas.height = renderRes;
     const tempCtx = tempCanvas.getContext('2d');
     if (tempCtx) {
       tempCtx.putImageData(imgData, 0, 0);
-      const scale = Math.min(displayWidth, displayHeight) / 180 * 0.9;
+
+      const minDim = Math.min(displayWidth, displayHeight);
       ctx.drawImage(
         tempCanvas,
-        displayWidth / 2 - (180 * scale) / 2,
-        displayHeight / 2 - (180 * scale) / 2,
-        180 * scale,
-        180 * scale
+        displayWidth / 2 + pan3D.x - minDim / 2,
+        displayHeight / 2 + pan3D.y - minDim / 2,
+        minDim,
+        minDim
       );
     }
 
-    // 3D Anatomical Orientation Compass Cube in corner
-    draw3dOrientationCube(ctx, displayWidth - 45, 45, yaw, pitch);
+    // Draw 3D Crosshair Cut Planes (MPR Scout Planes in 3D perspective space)
+    if (showCutPlanes) {
+      draw3dCutPlanes(ctx, displayWidth, displayHeight, volume, crosshair, yaw, pitch, zoom3D, pan3D);
+    }
+
+    // 3D Anatomical Compass Orientation Cube in top-right corner
+    draw3dOrientationCube(ctx, displayWidth - 42, 42, yaw, pitch);
 
     ctx.restore();
-  }, [volume, yaw, pitch, crosshair]);
+  }, [volume, yaw, pitch, crosshair, zoom3D, pan3D, selectedPreset, renderQuality, showCutPlanes]);
 
   useEffect(() => {
     render3d();
@@ -802,20 +837,48 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     setIsDragging(true);
+    setDragBtn(e.button);
     setDragStart({ x: e.clientX, y: e.clientY });
     setInitYaw(yaw);
     setInitPitch(pitch);
+    setInitPan({ ...pan3D });
+    setRenderQuality('fast');
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isDragging) return;
     const dx = e.clientX - dragStart.x;
     const dy = e.clientY - dragStart.y;
-    onUpdateRotation((initYaw + dx * 0.8) % 360, Math.max(-85, Math.min(85, initPitch + dy * 0.8)));
+
+    if (dragBtn === 0 && !e.ctrlKey) {
+      // Left Drag: Rotate Yaw & Pitch
+      onUpdateRotation((initYaw + dx * 0.7) % 360, Math.max(-85, Math.min(85, initPitch + dy * 0.7)));
+    } else if (dragBtn === 2 || (dragBtn === 0 && e.ctrlKey)) {
+      // Right Drag or Ctrl+Left Drag: Pan in 3D
+      setPan3D({
+        x: initPan.x + dx,
+        y: initPan.y + dy
+      });
+    }
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    // Switch to High Quality on release
+    setRenderQuality('high');
+  };
+
+  const handleWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    setZoom3D((prev) => Math.max(0.4, Math.min(4.0, prev * factor)));
+  };
+
+  const handleResetView = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onUpdateRotation(25, -15);
+    setZoom3D(1.0);
+    setPan3D({ x: 0, y: 0 });
   };
 
   return (
@@ -824,17 +887,88 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
+      onWheel={handleWheel}
+      onContextMenu={(e) => e.preventDefault()}
       className="relative w-full h-full bg-radiant-darkest border border-radiant-border overflow-hidden select-none cursor-grab active:cursor-grabbing group"
     >
       <canvas ref={canvasRef} className="w-full h-full" />
 
-      {/* Header */}
-      <div className="absolute top-2.5 left-3 radiant-overlay-text flex items-center gap-1.5">
-        <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
-        <span className="font-bold text-xs text-cyan-300">3D Volume Scout / Raymarching</span>
+      {/* Top-Left Header: 3D Scout Title + Preset Selector */}
+      <div className="absolute top-2.5 left-3 radiant-overlay-text flex items-center gap-2">
+        <div className="flex items-center gap-1.5 font-bold text-xs text-cyan-300">
+          <Sparkles className="w-3.5 h-3.5 text-cyan-400 animate-pulse" />
+          <span>3D Volume Scout</span>
+        </div>
+
+        {/* 3D Shading Preset Dropdown */}
+        <div className="relative">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowPresetsMenu(!showPresetsMenu);
+            }}
+            className="px-2 py-0.5 bg-black/60 hover:bg-slate-800 text-amber-300 rounded border border-amber-500/40 text-[10.5px] font-semibold flex items-center gap-1"
+          >
+            <span>{selectedPreset.name.split(' ')[1] || 'Preset'}</span>
+            <span className="text-[8px] text-slate-400">▾</span>
+          </button>
+
+          {showPresetsMenu && (
+            <div
+              onMouseDown={(e) => e.stopPropagation()}
+              className="absolute left-0 top-full mt-1 w-48 bg-radiant-panel border border-radiant-border rounded-xl shadow-2xl p-1 z-50 text-xs space-y-0.5"
+            >
+              <div className="px-2 py-1 text-[10px] font-semibold text-slate-400 border-b border-radiant-border">
+                3D Rendering Preset
+              </div>
+              {VOLUME_3D_PRESETS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onMouseDown={(e) => {
+                    e.stopPropagation();
+                    setSelectedPreset(p);
+                    setShowPresetsMenu(false);
+                  }}
+                  className={`w-full px-2 py-1.5 text-left rounded hover:bg-radiant-hover flex items-center justify-between text-[11px] ${
+                    selectedPreset.id === p.id ? 'text-amber-300 font-bold bg-amber-950/40' : 'text-slate-200'
+                  }`}
+                >
+                  <span>{p.name}</span>
+                  {selectedPreset.id === p.id && <span className="text-amber-400">✓</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Toggle 3D Cut Planes Button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setShowCutPlanes(!showCutPlanes);
+          }}
+          className={`px-1.5 py-0.5 rounded border text-[10px] font-medium transition-colors ${
+            showCutPlanes
+              ? 'bg-cyan-900/40 border-cyan-400/80 text-cyan-300'
+              : 'bg-black/40 border-slate-700 text-slate-400 hover:text-slate-200'
+          }`}
+          title="Toggle 3D MPR Crosshair Intersection Planes"
+        >
+          {showCutPlanes ? 'Planes: ON' : 'Planes: OFF'}
+        </button>
       </div>
 
-      <div className="absolute top-2.5 right-3 radiant-overlay-text">
+      {/* Top-Right: Reset View & Maximize Buttons */}
+      <div className="absolute top-2.5 right-3 radiant-overlay-text flex items-center gap-1.5">
+        <button
+          onClick={handleResetView}
+          className="p-1 bg-radiant-panel/80 hover:bg-radiant-hover text-slate-300 rounded border border-radiant-border opacity-0 group-hover:opacity-100 transition-opacity"
+          title="Reset 3D Rotation & Zoom"
+        >
+          <RotateCcw className="w-3.5 h-3.5 text-cyan-400" />
+        </button>
+
         <button
           onClick={onToggleMaximize}
           className="p-1 bg-radiant-panel/80 hover:bg-radiant-hover text-slate-300 rounded border border-radiant-border opacity-0 group-hover:opacity-100 transition-opacity"
@@ -844,13 +978,101 @@ const Mpr3dVolumeViewport: React.FC<Mpr3dVolumeViewportProps> = ({
         </button>
       </div>
 
-      <div className="absolute bottom-2.5 left-3 radiant-overlay-text text-[10px] text-slate-400">
-        Drag to rotate 3D Volume (Yaw: {Math.round(yaw)}°, Pitch: {Math.round(pitch)}°)
+      {/* Bottom Overlay Info */}
+      <div className="absolute bottom-2.5 left-3 radiant-overlay-text text-[10px] text-slate-400 flex items-center gap-3 font-mono">
+        <span>Yaw: {Math.round(yaw)}° • Pitch: {Math.round(pitch)}°</span>
+        <span>Zoom: {Math.round(zoom3D * 100)}%</span>
+      </div>
+
+      <div className="absolute bottom-2.5 right-3 radiant-overlay-text text-[9.5px] text-slate-500 font-mono hidden sm:block">
+        Left-drag: Rotate • Right-drag: Pan • Wheel: Zoom
       </div>
     </div>
   );
 };
 
+/**
+ * Superimpose 3D Orthogonal Cut Planes (Axial, Coronal, Sagittal) in perspective 3D space
+ */
+function draw3dCutPlanes(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  volume: Volume3D,
+  crosshair: { x: number; y: number; z: number },
+  yawDeg: number,
+  pitchDeg: number,
+  zoom: number,
+  pan: { x: number; y: number }
+) {
+  const { dimX, dimY, dimZ, spacingX, spacingY, spacingZ } = volume;
+  const physX = dimX * spacingX;
+  const physY = dimY * spacingY;
+  const physZ = dimZ * spacingZ;
+  const maxPhys = Math.max(physX, physY, physZ);
+  const minDim = Math.min(width, height);
+
+  const radY = (yawDeg * Math.PI) / 180;
+  const radP = (pitchDeg * Math.PI) / 180;
+  const cosY = Math.cos(radY), sinY = Math.sin(radY);
+  const cosP = Math.cos(radP), sinP = Math.sin(radP);
+
+  const projectPoint = (vx: number, vy: number, vz: number) => {
+    const px = vx * spacingX - physX / 2;
+    const py = vy * spacingY - physY / 2;
+    const pz = vz * spacingZ - physZ / 2;
+
+    const rx1 = px * cosY - pz * sinY;
+    const rz1 = px * sinY + pz * cosY;
+    const ry = py * cosP - rz1 * sinP;
+
+    const sx = width / 2 + pan.x + (rx1 / maxPhys) * minDim * zoom;
+    const sy = height / 2 + pan.y + (ry / maxPhys) * minDim * zoom;
+    return { x: sx, y: sy };
+  };
+
+  const drawQuad = (p0: any, p1: any, p2: any, p3: any, strokeColor: string, fillColor: string) => {
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.closePath();
+    ctx.fillStyle = fillColor;
+    ctx.fill();
+    ctx.strokeStyle = strokeColor;
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  };
+
+  // 1. Axial Cut Plane (Cyan Z-Plane)
+  const cz = Math.max(0, Math.min(dimZ - 1, crosshair.z));
+  const a0 = projectPoint(0, 0, cz);
+  const a1 = projectPoint(dimX - 1, 0, cz);
+  const a2 = projectPoint(dimX - 1, dimY - 1, cz);
+  const a3 = projectPoint(0, dimY - 1, cz);
+  drawQuad(a0, a1, a2, a3, '#38bdf8', 'rgba(56, 189, 248, 0.12)');
+
+  // 2. Coronal Cut Plane (Emerald Y-Plane)
+  const cy = Math.max(0, Math.min(dimY - 1, crosshair.y));
+  const c0 = projectPoint(0, cy, 0);
+  const c1 = projectPoint(dimX - 1, cy, 0);
+  const c2 = projectPoint(dimX - 1, cy, dimZ - 1);
+  const c3 = projectPoint(0, cy, dimZ - 1);
+  drawQuad(c0, c1, c2, c3, '#10b981', 'rgba(16, 185, 129, 0.12)');
+
+  // 3. Sagittal Cut Plane (Amber X-Plane)
+  const cx = Math.max(0, Math.min(dimX - 1, crosshair.x));
+  const s0 = projectPoint(cx, 0, 0);
+  const s1 = projectPoint(cx, dimY - 1, 0);
+  const s2 = projectPoint(cx, dimY - 1, dimZ - 1);
+  const s3 = projectPoint(cx, 0, dimZ - 1);
+  drawQuad(s0, s1, s2, s3, '#f59e0b', 'rgba(245, 158, 11, 0.12)');
+}
+
+/**
+ * 3D Anatomical Orientation Compass Cube
+ */
 function draw3dOrientationCube(
   ctx: CanvasRenderingContext2D,
   cx: number,
@@ -861,7 +1083,7 @@ function draw3dOrientationCube(
   const radY = (yawDeg * Math.PI) / 180;
   const radP = (pitchDeg * Math.PI) / 180;
 
-  const size = 20;
+  const size = 18;
 
   const axes = [
     { label: 'R', x: size, y: 0, z: 0, color: '#f59e0b' },
@@ -869,7 +1091,7 @@ function draw3dOrientationCube(
     { label: 'S', x: 0, y: 0, z: size, color: '#10b981' }
   ];
 
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.8;
 
   for (const axis of axes) {
     const rx1 = axis.x * Math.cos(radY) - axis.z * Math.sin(radY);
@@ -883,7 +1105,7 @@ function draw3dOrientationCube(
     ctx.stroke();
 
     ctx.fillStyle = axis.color;
-    ctx.font = 'bold 9.5px sans-serif';
-    ctx.fillText(axis.label, cx + rx1 * 1.25 - 3, cy + ry * 1.25 + 3);
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText(axis.label, cx + rx1 * 1.3 - 3, cy + ry * 1.3 + 3);
   }
 }
