@@ -488,9 +488,7 @@ export const App: React.FC = () => {
             }
             return [study, ...prev];
           });
-          if (activeStudyUid !== study.studyInstanceUid) {
-            handleSelectStudy(study);
-          }
+          handleSelectStudy(study);
         }}
       />
 

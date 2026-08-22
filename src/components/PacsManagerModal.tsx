@@ -647,7 +647,9 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                     return (
                       <div
                         key={res.studyInstanceUid}
-                        className="grid grid-cols-12 px-3 py-2 items-center hover:bg-radiant-hover transition-colors text-xs"
+                        onDoubleClick={() => handleRetrieve(res)}
+                        title="Double-click or click Retrieve to open study in workstation"
+                        className="grid grid-cols-12 px-3 py-2 items-center hover:bg-cyan-950/40 cursor-pointer transition-colors text-xs select-none"
                       >
                         <div className="col-span-3 font-semibold text-slate-100 flex items-center gap-1.5">
                           <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
