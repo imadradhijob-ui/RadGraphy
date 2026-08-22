@@ -23,6 +23,8 @@ function createWindow() {
     }
   });
 
+  mainWindow.maximize();
+
   const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
   if (isDev) {
@@ -170,10 +172,27 @@ ipcMain.handle('pacs:search', async (event, serverConfig, filters) => {
   return searchDicomStudies(serverConfig, filters);
 });
 
-ipcMain.handle('pacs:retrieve', async (event, serverConfig, studyInstanceUid) => {
-  return retrieveDicomStudy(serverConfig, studyInstanceUid, (slice) => {
-    try {
-      event.sender.send('pacs:slice', slice);
-    } catch (e) {}
-  });
+// Window Control Handlers
+ipcMain.handle('window:minimize', () => {
+  if (mainWindow) mainWindow.minimize();
+});
+
+ipcMain.handle('window:maximize', () => {
+  if (mainWindow) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
+  }
+});
+
+ipcMain.handle('window:close', () => {
+  if (mainWindow) mainWindow.close();
+});
+
+ipcMain.handle('window:toggleFullScreen', () => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  }
 });

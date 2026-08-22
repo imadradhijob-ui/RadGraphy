@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pacsEcho: (serverConfig) => ipcRenderer.invoke('pacs:echo', serverConfig),
   pacsSearch: (serverConfig, filters) => ipcRenderer.invoke('pacs:search', serverConfig, filters),
   pacsRetrieve: (serverConfig, studyInstanceUid) => ipcRenderer.invoke('pacs:retrieve', serverConfig, studyInstanceUid),
+  minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
+  maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
+  closeWindow: () => ipcRenderer.invoke('window:close'),
+  toggleFullScreen: () => ipcRenderer.invoke('window:toggleFullScreen'),
   onPacsSlice: (callback) => {
     const listener = (event, slice) => callback(slice);
     ipcRenderer.on('pacs:slice', listener);

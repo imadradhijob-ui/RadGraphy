@@ -382,14 +382,70 @@ export const App: React.FC = () => {
 
   // Toggle Fullscreen
   const handleToggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
+    if ((window as any).electronAPI?.toggleFullScreen) {
+      (window as any).electronAPI.toggleFullScreen();
+      setIsFullscreen(!isFullscreen);
     } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+        setIsFullscreen(true);
+      } else {
+        document.exitFullscreen().catch(() => {});
+        setIsFullscreen(false);
+      }
     }
   };
+
+  // Window Minimize
+  const handleMinimize = () => {
+    if ((window as any).electronAPI?.minimizeWindow) {
+      (window as any).electronAPI.minimizeWindow();
+    } else {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+        setIsFullscreen(false);
+      } else {
+        showNotification('Minimizing workstation view');
+      }
+    }
+  };
+
+  // Application Exit / Close
+  const handleExit = () => {
+    if ((window as any).electronAPI?.closeWindow) {
+      (window as any).electronAPI.closeWindow();
+    } else {
+      if (confirm('Are you sure you want to exit the RadGraph PACS Workstation?')) {
+        window.close();
+        window.location.href = 'about:blank';
+      }
+    }
+  };
+
+  // Auto-Enforce Fullscreen Mode on start & first user interaction
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+
+    const tryAutoFullscreen = () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    };
+
+    // Try immediately and on user click/interaction
+    tryAutoFullscreen();
+    window.addEventListener('click', tryAutoFullscreen, { once: true });
+    window.addEventListener('keydown', tryAutoFullscreen, { once: true });
+
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+      window.removeEventListener('click', tryAutoFullscreen);
+      window.removeEventListener('keydown', tryAutoFullscreen);
+    };
+  }, []);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -472,6 +528,8 @@ export const App: React.FC = () => {
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onMinimize={handleMinimize}
+        onExit={handleExit}
       />
 
       {/* 2. Menu Bar */}

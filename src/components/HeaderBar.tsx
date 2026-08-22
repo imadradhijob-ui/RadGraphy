@@ -6,12 +6,15 @@ import {
   HardDrive,
   Maximize,
   Minimize,
+  Minus,
   RefreshCw,
   Server,
   Settings,
   Tag,
   Download,
-  FileText
+  FileText,
+  X,
+  Power
 } from 'lucide-react';
 import { DicomStudy } from '../types/dicom';
 
@@ -26,6 +29,8 @@ interface HeaderBarProps {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onOpenSettings?: () => void;
+  onMinimize?: () => void;
+  onExit?: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -38,7 +43,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenFolderClick,
   isFullscreen,
   onToggleFullscreen,
-  onOpenSettings
+  onOpenSettings,
+  onMinimize,
+  onExit
 }) => {
   return (
     <header className="h-11 bg-radiant-darkest border-b border-radiant-border flex items-center justify-between px-3 select-none text-xs text-slate-200">
@@ -73,7 +80,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         )}
       </div>
 
-      {/* Quick Action Buttons */}
+      {/* Quick Action & Window Controls */}
       <div className="flex items-center gap-1.5">
         {/* Open Files / Folder */}
         <button
@@ -143,14 +150,36 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </button>
         )}
 
-        {/* Fullscreen Toggle */}
-        <button
-          onClick={onToggleFullscreen}
-          title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen (F11)'}
-          className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-white rounded border border-radiant-border transition-colors"
-        >
-          {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
-        </button>
+        {/* Top-Right Window Controls Hub (Minimize, Fullscreen, Exit) */}
+        <div className="flex items-center gap-1 pl-1.5 ml-1 border-l border-radiant-border">
+          {/* Minimize Button */}
+          <button
+            onClick={onMinimize}
+            title="Minimize Workstation Window"
+            className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-amber-300 rounded border border-radiant-border transition-colors"
+          >
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Fullscreen / Maximize Toggle */}
+          <button
+            onClick={onToggleFullscreen}
+            title={isFullscreen ? 'Exit Fullscreen (F11)' : 'Always Fullscreen (F11)'}
+            className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border transition-colors"
+          >
+            {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+          </button>
+
+          {/* Exit / Close Application Button */}
+          <button
+            onClick={onExit}
+            title="Exit / Close RadGraph Application"
+            className="flex items-center gap-1 px-2.5 py-1 bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white rounded border border-rose-700/60 transition-all font-semibold text-xs shadow-sm"
+          >
+            <X className="w-3.5 h-3.5" />
+            <span>Exit</span>
+          </button>
+        </div>
       </div>
     </header>
   );
