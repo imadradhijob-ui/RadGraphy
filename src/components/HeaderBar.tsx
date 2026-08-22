@@ -51,8 +51,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
     <header className="h-11 bg-radiant-darkest border-b border-radiant-border flex items-center justify-between px-3 select-none text-xs text-slate-200">
       {/* Brand & App Title */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-700 px-2 py-1 rounded shadow-sm text-white font-bold text-sm tracking-wide">
-          <img src="/logo.png" alt="RadGraph" className="w-5 h-5 object-contain rounded-sm" />
+        <div className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-700 px-2.5 py-1 rounded shadow-sm text-white font-bold text-sm tracking-wide">
           <span>RadGraph</span>
           <span className="text-[10px] font-mono bg-cyan-950/60 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-400/40">
             v1.0.0
