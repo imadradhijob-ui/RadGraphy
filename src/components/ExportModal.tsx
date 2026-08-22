@@ -30,7 +30,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     setIsExporting(true);
     const canvas = document.querySelector('canvas') as HTMLCanvasElement;
     if (canvas) {
-      const fileName = `${study.patientId}_${study.studyDescription.replace(/\s+/g, '_')}_IM${currentInstance.instanceNumber}`;
+      const pId = anonymize ? 'ANONYMOUS' : study.patientId;
+      const fileName = `${pId}_${study.studyDescription.replace(/\s+/g, '_')}_IM${currentInstance.instanceNumber}`;
       ExportService.downloadCanvasImage(canvas, fileName, format);
       setSuccessMessage('Image exported successfully!');
       setTimeout(() => {
@@ -44,7 +45,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const handleGenerateReport = () => {
     const canvas = document.querySelector('canvas') as HTMLCanvasElement;
     const dataUrl = canvas ? canvas.toDataURL('image/jpeg', 0.9) : undefined;
-    ExportService.generateStudyReport(study, currentInstance, measurements, dataUrl);
+    ExportService.generateStudyReport(study, currentInstance, measurements, dataUrl, anonymize);
     onClose();
   };
 

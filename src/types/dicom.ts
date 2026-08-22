@@ -102,11 +102,13 @@ export type ToolType =
   | 'ww_wl'
   | 'pan'
   | 'zoom'
+  | 'loupe'
   | 'rotate'
   | 'scroll'
   | 'distance'
   | 'angle'
   | 'cobb_angle'
+  | 'ctr'
   | 'rectangle_roi'
   | 'ellipse_roi'
   | 'hu_probe';
@@ -119,6 +121,10 @@ export type ColorLutType =
   | 'angio'
   | 'cool_blue'
   | 'inverted';
+
+export type ImageFilterType = 'none' | 'sharpen' | 'smooth' | 'edge' | 'bone';
+
+export type SyncMode = 'none' | 'index' | 'location';
 
 export type MipMode = 'none' | 'mip' | 'minip' | 'average';
 
@@ -136,6 +142,14 @@ export interface RoiStatistics {
   minHu: number;
   maxHu: number;
   stdDevHu: number;
+  histogram?: { bins: number[]; minHu: number; maxHu: number; count: number };
+}
+
+export interface CtrStatistics {
+  cardiacDiameterMm: number;
+  thoracicDiameterMm: number;
+  ratio: number;
+  isCardiomegaly: boolean;
 }
 
 export interface Measurement {
@@ -148,10 +162,28 @@ export interface Measurement {
   angleDeg?: number;
   cobbDeg?: number;
   roiValues?: RoiStatistics;
+  ctrValues?: CtrStatistics;
   probeHu?: number;
   probeCoord?: Point2D;
   tissueName?: string;
   isFinished: boolean;
+}
+
+export interface KeyImageBookmark {
+  id: string;
+  studyInstanceUid: string;
+  seriesInstanceUid: string;
+  instanceIndex: number;
+  sopInstanceUid?: string;
+  patientName: string;
+  patientId: string;
+  studyDescription: string;
+  seriesDescription: string;
+  sliceLocation?: number;
+  timestamp: number;
+  notes: string;
+  snapshotDataUrl: string;
+  measurementsCount: number;
 }
 
 export interface ViewportState {
@@ -168,6 +200,9 @@ export interface ViewportState {
   flipV: boolean;
   invert: boolean;
   lut: ColorLutType;
+  filter?: ImageFilterType;
+  loupeScale?: number;
+  loupeRadius?: number;
   mipMode: MipMode;
   mipSlabThickness: number; // 1 = standard single slice, 3, 5, 10, 20 = slab thickness
   cinePlaying: boolean;

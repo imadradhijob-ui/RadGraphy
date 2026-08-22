@@ -11,14 +11,19 @@ import { DicomTagModal } from './components/DicomTagModal';
 import { ExportModal } from './components/ExportModal';
 import { AboutModal } from './components/AboutModal';
 import { Volume3dModal } from './components/Volume3dModal';
+import { KeyImagesModal } from './components/KeyImagesModal';
+import { ReportGeneratorModal } from './components/ReportGeneratorModal';
 
 import {
   DicomInstance,
   DicomSeries,
   DicomStudy,
   GridLayout,
+  ImageFilterType,
+  KeyImageBookmark,
   Measurement,
   Point2D,
+  SyncMode,
   ToolType,
   ViewportState
 } from './types/dicom';
@@ -36,6 +41,10 @@ export const App: React.FC = () => {
   const [gridLayout, setGridLayout] = useState<GridLayout>('1x1');
   const [activeViewportId, setActiveViewportId] = useState<string>('vp_0');
   const [isMprActive, setIsMprActive] = useState<boolean>(false);
+  const [syncMode, setSyncMode] = useState<SyncMode>('none');
+
+  // Key image bookmarks
+  const [bookmarks, setBookmarks] = useState<KeyImageBookmark[]>([]);
 
   // UI Panels and Modals
   const [isSidebarOpen, setIsSidebarOpen] = useState<boolean>(true);
@@ -43,6 +52,8 @@ export const App: React.FC = () => {
   const [isPacsModalOpen, setIsPacsModalOpen] = useState<boolean>(false);
   const [isDicomDirModalOpen, setIsDicomDirModalOpen] = useState<boolean>(false);
   const [isTagModalOpen, setIsTagModalOpen] = useState<boolean>(false);
+  const [isKeyImagesModalOpen, setIsKeyImagesModalOpen] = useState<boolean>(false);
+  const [isReportModalOpen, setIsReportModalOpen] = useState<boolean>(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState<boolean>(false);
   const [is3dModalOpen, setIs3dModalOpen] = useState<boolean>(false);
@@ -99,14 +110,96 @@ export const App: React.FC = () => {
   const activeInstance = activeSeries?.instances[activeInstanceIndex];
 
   const handleUpdateViewportState = useCallback((id: string, updates: Partial<ViewportState>) => {
-    setViewports(prev =>
-      prev.map(vp => (vp.id === id ? { ...vp, ...updates } : vp))
-    );
-  }, []);
+    setViewports(prev => {
+      const sourceVp = prev.find(v => v.id === id);
+      if (!sourceVp) return prev;
+
+      // Multi-Viewport Cross-Series Synchronized Scrolling
+      if (updates.instanceIndex !== undefined && syncMode !== 'none' && updates.instanceIndex !== sourceVp.instanceIndex) {
+        const targetInstIdx = updates.instanceIndex;
+        return prev.map(vp => {
+          if (vp.id === id) return { ...vp, ...updates };
+
+          const vpStudy = studies.find(s => s.studyInstanceUid === vp.studyUid);
+          const vpSeries = vpStudy?.series.find(s => s.seriesInstanceUid === vp.seriesUid);
+          if (!vpSeries || vpSeries.instances.length <= 1) return vp;
+
+          if (syncMode === 'index') {
+            const syncedIdx = Math.min(vpSeries.instances.length - 1, targetInstIdx);
+            return { ...vp, instanceIndex: syncedIdx };
+          } else if (syncMode === 'location') {
+            const srcStudy = studies.find(s => s.studyInstanceUid === sourceVp.studyUid);
+            const srcSeries = srcStudy?.series.find(s => s.seriesInstanceUid === sourceVp.seriesUid);
+            const srcLoc = srcSeries?.instances[targetInstIdx]?.sliceLocation ?? srcSeries?.instances[targetInstIdx]?.imagePositionPatient?.[2];
+
+            if (srcLoc !== undefined) {
+              let closestIdx = 0;
+              let minDiff = Infinity;
+              vpSeries.instances.forEach((inst, idx) => {
+                const loc = inst.sliceLocation ?? inst.imagePositionPatient?.[2];
+                if (loc !== undefined) {
+                  const diff = Math.abs(loc - srcLoc);
+                  if (diff < minDiff) {
+                    minDiff = diff;
+                    closestIdx = idx;
+                  }
+                }
+              });
+              return { ...vp, instanceIndex: closestIdx };
+            }
+          }
+          return vp;
+        });
+      }
+
+      return prev.map(vp => (vp.id === id ? { ...vp, ...updates } : vp));
+    });
+  }, [syncMode, studies]);
 
   const updateActiveViewport = useCallback((updates: Partial<ViewportState>) => {
     handleUpdateViewportState(activeViewportId, updates);
   }, [activeViewportId, handleUpdateViewportState]);
+
+  const handleBookmarkCurrentSlice = useCallback(() => {
+    if (!activeStudy || !activeSeries || !activeInstance) {
+      showNotification('No active DICOM image to bookmark');
+      return;
+    }
+
+    const canvas = document.querySelector('canvas') as HTMLCanvasElement;
+    const snapshot = canvas ? canvas.toDataURL('image/jpeg', 0.85) : '';
+
+    const newBookmark: KeyImageBookmark = {
+      id: `bm_${Date.now()}`,
+      studyInstanceUid: activeStudy.studyInstanceUid,
+      seriesInstanceUid: activeSeries.seriesInstanceUid,
+      instanceIndex: activeInstanceIndex,
+      sopInstanceUid: activeInstance.sopInstanceUid,
+      patientName: activeStudy.patientName.replace(/\^/g, ' '),
+      patientId: activeStudy.patientId,
+      studyDescription: activeStudy.studyDescription,
+      seriesDescription: activeSeries.seriesDescription,
+      sliceLocation: activeInstance.sliceLocation,
+      timestamp: Date.now(),
+      notes: '',
+      snapshotDataUrl: snapshot,
+      measurementsCount: currentViewport.measurements.filter(
+        m => m.instanceIndex === activeInstanceIndex || m.instanceIndex === undefined
+      ).length
+    };
+
+    setBookmarks(prev => [newBookmark, ...prev]);
+    showNotification(`📌 Slice #${activeInstanceIndex + 1} bookmarked to Key Images.`);
+  }, [activeStudy, activeSeries, activeInstance, activeInstanceIndex, currentViewport]);
+
+  const handleDeleteBookmark = (id: string) => {
+    setBookmarks(prev => prev.filter(b => b.id !== id));
+    showNotification('Bookmark removed.');
+  };
+
+  const handleUpdateBookmarkNotes = (id: string, notes: string) => {
+    setBookmarks(prev => prev.map(b => b.id === id ? { ...b, notes } : b));
+  };
 
   const handleSelectStudy = (study: DicomStudy) => {
     setActiveStudyUid(study.studyInstanceUid);
@@ -167,7 +260,7 @@ export const App: React.FC = () => {
   };
 
   const handleDragSeriesStart = (e: React.DragEvent, series: DicomSeries) => {
-    e.dataTransfer.setData('application/json', JSON.stringify({
+    e.dataTransfer.setData('text/plain', JSON.stringify({
       studyUid: series.studyInstanceUid,
       seriesUid: series.seriesInstanceUid
     }));
@@ -313,6 +406,8 @@ export const App: React.FC = () => {
       else if (e.key.toLowerCase() === 'w') setActiveTool('ww_wl');
       else if (e.key.toLowerCase() === 'z') setActiveTool('zoom');
       else if (e.key.toLowerCase() === 'p') setActiveTool('pan');
+      else if (e.key.toLowerCase() === 'l') setActiveTool('loupe');
+      else if (e.key.toLowerCase() === 'b') handleBookmarkCurrentSlice();
       else if (e.key.toLowerCase() === 'd') setActiveTool('distance');
       else if (e.key.toLowerCase() === 'a') setActiveTool('angle');
       else if (e.key.toLowerCase() === 'r') setActiveTool('rectangle_roi');
@@ -325,7 +420,7 @@ export const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [currentViewport]);
+  }, [currentViewport, handleBookmarkCurrentSlice]);
 
   return (
     <div
@@ -404,6 +499,10 @@ export const App: React.FC = () => {
         onSetGrid={setGridLayout}
         currentLut={currentViewport.lut || 'grayscale'}
         onSetLut={(lut) => updateActiveViewport({ lut })}
+        currentFilter={currentViewport.filter || 'none'}
+        onSetFilter={(filter: ImageFilterType) => updateActiveViewport({ filter })}
+        syncMode={syncMode}
+        onSetSyncMode={setSyncMode}
         currentMipMode={currentViewport.mipMode || 'none'}
         currentMipSlab={currentViewport.mipSlabThickness || 1}
         onSetMip={(mode, slab) => updateActiveViewport({ mipMode: mode, mipSlabThickness: slab })}
@@ -417,6 +516,9 @@ export const App: React.FC = () => {
         onOpenPacs={() => setIsPacsModalOpen(true)}
         onOpenDicomDir={() => setIsDicomDirModalOpen(true)}
         onOpenExport={() => setIsExportModalOpen(true)}
+        bookmarksCount={bookmarks.length}
+        onOpenBookmarks={() => setIsKeyImagesModalOpen(true)}
+        onOpenReport={() => setIsReportModalOpen(true)}
       />
 
       {/* 4. Central Workstation Workspace (Sidebar + Viewport Grid or MPR) */}
@@ -512,6 +614,36 @@ export const App: React.FC = () => {
         onClose={() => setIsExportModalOpen(false)}
         study={activeStudy}
         currentInstance={activeInstance}
+        measurements={currentViewport.measurements}
+      />
+
+      <KeyImagesModal
+        isOpen={isKeyImagesModalOpen}
+        onClose={() => setIsKeyImagesModalOpen(false)}
+        bookmarks={bookmarks}
+        onDeleteBookmark={handleDeleteBookmark}
+        onUpdateNotes={handleUpdateBookmarkNotes}
+        onOpenReport={() => setIsReportModalOpen(true)}
+        onJumpToSlice={(b) => {
+          const study = studies.find(s => s.studyInstanceUid === b.studyInstanceUid);
+          const ser = study?.series.find(s => s.seriesInstanceUid === b.seriesInstanceUid);
+          if (ser && study) {
+            setActiveStudyUid(study.studyInstanceUid);
+            setActiveSeriesUid(ser.seriesInstanceUid);
+            updateActiveViewport({
+              studyUid: study.studyInstanceUid,
+              seriesUid: ser.seriesInstanceUid,
+              instanceIndex: b.instanceIndex
+            });
+          }
+        }}
+      />
+
+      <ReportGeneratorModal
+        isOpen={isReportModalOpen}
+        onClose={() => setIsReportModalOpen(false)}
+        study={activeStudy}
+        bookmarks={bookmarks}
         measurements={currentViewport.measurements}
       />
 

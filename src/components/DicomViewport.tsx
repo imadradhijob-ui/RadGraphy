@@ -10,6 +10,7 @@ import {
 } from '../types/dicom';
 import { getOrDecodeInstancePixels } from '../services/dicomParser';
 import { getLutTable, classifyTissueFromHu } from '../services/lutService';
+import { applyImageFilter } from '../services/imageFilters';
 
 interface DicomViewportProps {
   viewportState: ViewportState;
@@ -263,6 +264,9 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     }
     const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: false });
     if (tempCtx) {
+      if (viewportState.filter && viewportState.filter !== 'none') {
+        applyImageFilter(imgData, viewportState.filter);
+      }
       tempCtx.putImageData(imgData, 0, 0);
       ctx.imageSmoothingEnabled = viewportState.zoom < 2.5;
       ctx.drawImage(tempCanvas, -width / 2, -height / 2);
@@ -337,6 +341,53 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
         const midX = (p1.x + p2.x) / 2;
         const midY = (p1.y + p2.y) / 2 - 8;
         drawTextBadge(ctx, `${distMm.toFixed(2)} mm`, midX, midY);
+      } else if (m.type === 'ctr' && m.points.length >= 2) {
+        const pts = m.points.map(p => imageToScreenCoord(p.x, p.y));
+
+        // Line 1: Cardiac Diameter (Points 0 -> 1)
+        ctx.save();
+        ctx.strokeStyle = '#f43f5e';
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        ctx.lineTo(pts[1].x, pts[1].y);
+        ctx.stroke();
+        drawCaliper(ctx, pts[0].x, pts[0].y);
+        drawCaliper(ctx, pts[1].x, pts[1].y);
+
+        const cDx = (m.points[1].x - m.points[0].x) * currentInstance.pixelSpacing[1];
+        const cDy = (m.points[1].y - m.points[0].y) * currentInstance.pixelSpacing[0];
+        const cardiacMm = Math.sqrt(cDx * cDx + cDy * cDy);
+        drawTextBadge(ctx, `Heart: ${cardiacMm.toFixed(1)}mm`, (pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2 - 8);
+
+        // Line 2: Thoracic Diameter (Points 2 -> 3)
+        if (pts.length >= 4) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.beginPath();
+          ctx.moveTo(pts[2].x, pts[2].y);
+          ctx.lineTo(pts[3].x, pts[3].y);
+          ctx.stroke();
+          drawCaliper(ctx, pts[2].x, pts[2].y);
+          drawCaliper(ctx, pts[3].x, pts[3].y);
+
+          const tDx = (m.points[3].x - m.points[2].x) * currentInstance.pixelSpacing[1];
+          const tDy = (m.points[3].y - m.points[2].y) * currentInstance.pixelSpacing[0];
+          const thoraxMm = Math.max(0.1, Math.sqrt(tDx * tDx + tDy * tDy));
+          const ratio = cardiacMm / thoraxMm;
+          const isCardiomegaly = ratio >= 0.50;
+
+          drawTextBadge(ctx, `Thorax: ${thoraxMm.toFixed(1)}mm`, (pts[2].x + pts[3].x) / 2, (pts[2].y + pts[3].y) / 2 + 10);
+
+          const ctrBadge = `CARDIOTHORACIC RATIO (CTR)\nCTR: ${(ratio * 100).toFixed(1)}% (${cardiacMm.toFixed(1)} / ${thoraxMm.toFixed(1)} mm)\nStatus: ${isCardiomegaly ? '⚠️ CARDIOMEGALY (≥ 50%)' : '✅ NORMAL (< 50%)'}`;
+          drawMultiLineBadge(ctx, ctrBadge, Math.max(pts[1].x, pts[3].x) + 15, (pts[1].y + pts[3].y) / 2);
+        } else if (pts.length === 3) {
+          ctx.strokeStyle = '#38bdf8';
+          ctx.beginPath();
+          ctx.moveTo(pts[2].x, pts[2].y);
+          const mouseScr = mousePos.x ? imageToScreenCoord(mousePos.x, mousePos.y) : pts[2];
+          ctx.lineTo(mouseScr.x, mouseScr.y);
+          ctx.stroke();
+        }
+        ctx.restore();
       } else if (m.type === 'angle' && m.points.length >= 2) {
         const pts = m.points.map(p => imageToScreenCoord(p.x, p.y));
         ctx.beginPath();
@@ -424,7 +475,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
         const roi = calculateRectangleRoi(m.points[0], m.points[1], currentInstance);
         if (roi) {
           const badge = `Area: ${roi.areaCm2.toFixed(2)} cm²\nMean: ${roi.meanHu.toFixed(1)} HU\nStdDev: ${roi.stdDevHu.toFixed(1)}\n[Min: ${roi.minHu} | Max: ${roi.maxHu}]`;
-          drawMultiLineBadge(ctx, badge, left + w + 5, top + 15);
+          drawMultiLineBadge(ctx, badge, left + w + 5, top + 15, roi.histogram?.bins);
         }
       } else if (m.type === 'ellipse_roi' && m.points.length >= 2) {
         const p1 = imageToScreenCoord(m.points[0].x, m.points[0].y);
@@ -442,7 +493,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
         const roi = calculateEllipseRoi(m.points[0], m.points[1], currentInstance);
         if (roi) {
           const badge = `Area: ${roi.areaCm2.toFixed(2)} cm²\nMean: ${roi.meanHu.toFixed(1)} HU\nStdDev: ${roi.stdDevHu.toFixed(1)}\n[Min: ${roi.minHu} | Max: ${roi.maxHu}]`;
-          drawMultiLineBadge(ctx, badge, cx + rx + 5, cy);
+          drawMultiLineBadge(ctx, badge, cx + rx + 5, cy, roi.histogram?.bins);
         }
       } else if (m.type === 'hu_probe' && m.points.length >= 1) {
         const p = imageToScreenCoord(m.points[0].x, m.points[0].y);
@@ -462,6 +513,58 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       const tissue = classifyTissueFromHu(hoveredHu);
       const liveBadge = `HU: ${hoveredHu >= 0 ? '+' : ''}${hoveredHu} [X:${hoveredPixelCoord.x}, Y:${hoveredPixelCoord.y}]\n${tissue.name} (${tissue.arabic})`;
       drawMultiLineBadge(ctx, liveBadge, scr.x + 15, scr.y - 15);
+    }
+
+    // Interactive Diagnostic Magnifying Loupe HUD
+    if (activeTool === 'loupe' && mousePos.x && mousePos.y && offscreenCanvasRef.current) {
+      const scr = imageToScreenCoord(mousePos.x, mousePos.y);
+      const radius = viewportState.loupeRadius || 105;
+      const mag = viewportState.loupeScale || 2.5;
+
+      const fitScale = Math.min(displayWidth / currentInstance.columns, displayHeight / currentInstance.rows);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, radius, 0, 2 * Math.PI);
+      ctx.clip();
+
+      ctx.fillStyle = '#000000';
+      ctx.fill();
+
+      const srcW = (radius * 2) / (fitScale * viewportState.zoom * mag);
+      const srcH = (radius * 2) / (fitScale * viewportState.zoom * mag);
+      const srcX = mousePos.x - srcW / 2;
+      const srcY = mousePos.y - srcH / 2;
+
+      ctx.drawImage(
+        offscreenCanvasRef.current,
+        srcX, srcY, srcW, srcH,
+        scr.x - radius, scr.y - radius, radius * 2, radius * 2
+      );
+
+      // Loupe crosshairs
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(scr.x - 20, scr.y); ctx.lineTo(scr.x + 20, scr.y);
+      ctx.moveTo(scr.x, scr.y - 20); ctx.lineTo(scr.x, scr.y + 20);
+      ctx.stroke();
+
+      ctx.restore();
+
+      // Outer bezel ring
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(scr.x, scr.y, radius, 0, 2 * Math.PI);
+      ctx.strokeStyle = '#06b6d4';
+      ctx.lineWidth = 2.5;
+      ctx.shadowColor = 'rgba(6, 182, 212, 0.8)';
+      ctx.shadowBlur = 10;
+      ctx.stroke();
+
+      const huVal = hoveredHu !== null ? `${hoveredHu >= 0 ? '+' : ''}${hoveredHu} HU` : '';
+      drawTextBadge(ctx, `🔍 ${mag.toFixed(1)}x Loupe ${huVal ? `| ${huVal}` : ''}`, scr.x - 55, scr.y + radius + 14);
+      ctx.restore();
     }
 
     ctx.restore();
@@ -524,6 +627,39 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             instanceIndex,
             type: 'cobb_angle',
             points: finalPts,
+            isFinished: true
+          });
+          setDrawingPoints([]);
+        }
+      } else if (activeTool === 'ctr') {
+        if (drawingPoints.length === 0) {
+          setDrawingPoints([imgCoord]);
+        } else if (drawingPoints.length === 1) {
+          setDrawingPoints([drawingPoints[0], imgCoord]);
+        } else if (drawingPoints.length === 2) {
+          setDrawingPoints([drawingPoints[0], drawingPoints[1], imgCoord]);
+        } else if (drawingPoints.length === 3) {
+          const finalPts = [drawingPoints[0], drawingPoints[1], drawingPoints[2], imgCoord];
+          const cDx = (finalPts[1].x - finalPts[0].x) * (currentInstance?.pixelSpacing[1] || 1);
+          const cDy = (finalPts[1].y - finalPts[0].y) * (currentInstance?.pixelSpacing[0] || 1);
+          const cardiacMm = Math.sqrt(cDx * cDx + cDy * cDy);
+
+          const tDx = (finalPts[3].x - finalPts[2].x) * (currentInstance?.pixelSpacing[1] || 1);
+          const tDy = (finalPts[3].y - finalPts[2].y) * (currentInstance?.pixelSpacing[0] || 1);
+          const thoraxMm = Math.max(0.1, Math.sqrt(tDx * tDx + tDy * tDy));
+          const ratio = cardiacMm / thoraxMm;
+
+          onAddMeasurement({
+            id: `ctr_${Date.now()}`,
+            instanceIndex,
+            type: 'ctr',
+            points: finalPts,
+            ctrValues: {
+              cardiacDiameterMm: cardiacMm,
+              thoracicDiameterMm: thoraxMm,
+              ratio,
+              isCardiomegaly: ratio >= 0.50
+            },
             isFinished: true
           });
           setDrawingPoints([]);
@@ -639,6 +775,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       case 'ww_wl': return 'cursor-ww-wl';
       case 'pan': return 'cursor-pan-medical';
       case 'zoom': return 'cursor-zoom-medical';
+      case 'loupe': return 'cursor-crosshair';
+      case 'ctr':
       case 'distance':
       case 'angle':
       case 'rectangle_roi':
@@ -774,29 +912,58 @@ function drawTextBadge(ctx: CanvasRenderingContext2D, text: string, x: number, y
   ctx.restore();
 }
 
-function drawMultiLineBadge(ctx: CanvasRenderingContext2D, text: string, x: number, y: number) {
+function drawMultiLineBadge(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, histogramBins?: number[]) {
   ctx.save();
   ctx.font = '11px "JetBrains Mono", monospace';
   const lines = text.split('\n');
   const lineHeight = 14;
   const padding = 6;
+  const histHeight = histogramBins && histogramBins.length > 0 ? 28 : 0;
 
   let maxW = 0;
   for (const line of lines) {
     const w = ctx.measureText(line).width;
     if (w > maxW) maxW = w;
   }
+  if (histogramBins && maxW < 130) maxW = 130;
 
-  ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-  ctx.fillRect(x - padding, y - padding, maxW + padding * 2, lines.length * lineHeight + padding * 2);
+  const totalH = lines.length * lineHeight + padding * 2 + (histHeight > 0 ? histHeight + 4 : 0);
+
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+  ctx.fillRect(x - padding, y - padding, maxW + padding * 2, totalH);
 
   ctx.strokeStyle = '#0284c7';
-  ctx.strokeRect(x - padding, y - padding, maxW + padding * 2, lines.length * lineHeight + padding * 2);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x - padding, y - padding, maxW + padding * 2, totalH);
 
   ctx.fillStyle = '#e2e8f0';
   for (let i = 0; i < lines.length; i++) {
     ctx.fillText(lines[i], x, y + (i + 1) * lineHeight - 2);
   }
+
+  // Draw mini HU Frequency Histogram Bar Chart
+  if (histogramBins && histogramBins.length > 0) {
+    const startY = y + lines.length * lineHeight + 4;
+    const maxBin = Math.max(1, ...histogramBins);
+    const barW = (maxW - 4) / histogramBins.length;
+
+    ctx.fillStyle = 'rgba(2, 132, 199, 0.2)';
+    ctx.fillRect(x, startY, maxW, histHeight);
+
+    for (let b = 0; b < histogramBins.length; b++) {
+      const bh = (histogramBins[b] / maxBin) * (histHeight - 4);
+      const bx = x + b * barW;
+      const by = startY + histHeight - bh - 2;
+
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(bx, by, Math.max(1, barW - 1), bh);
+    }
+
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '8px monospace';
+    ctx.fillText('HU Density Histogram', x + 2, startY + 8);
+  }
+
   ctx.restore();
 }
 
@@ -823,6 +990,7 @@ function calculateRectangleRoi(p1: Point2D, p2: Point2D, instance?: DicomInstanc
   let count = 0;
   let min = Infinity;
   let max = -Infinity;
+  const values: number[] = [];
 
   for (let y = minY; y <= maxY; y++) {
     const rowOffset = y * instance.columns;
@@ -830,6 +998,7 @@ function calculateRectangleRoi(p1: Point2D, p2: Point2D, instance?: DicomInstanc
       const hu = huData[rowOffset + x];
       sum += hu;
       count++;
+      values.push(hu);
       if (hu < min) min = hu;
       if (hu > max) max = hu;
     }
@@ -840,14 +1009,19 @@ function calculateRectangleRoi(p1: Point2D, p2: Point2D, instance?: DicomInstanc
   const mean = sum / count;
 
   let varSum = 0;
-  for (let y = minY; y <= maxY; y++) {
-    const rowOffset = y * instance.columns;
-    for (let x = minX; x <= maxX; x++) {
-      const hu = huData[rowOffset + x];
-      varSum += Math.pow(hu - mean, 2);
-    }
+  for (const hu of values) {
+    varSum += Math.pow(hu - mean, 2);
   }
   const stdDev = Math.sqrt(varSum / count);
+
+  // 16-bin Histogram
+  const numBins = 16;
+  const bins = new Array(numBins).fill(0);
+  const range = Math.max(1, max - min);
+  for (const hu of values) {
+    const binIdx = Math.min(numBins - 1, Math.floor(((hu - min) / range) * numBins));
+    bins[binIdx]++;
+  }
 
   const rowSpacing = instance.pixelSpacing?.[0] || 1;
   const colSpacing = instance.pixelSpacing?.[1] || 1;
@@ -860,7 +1034,8 @@ function calculateRectangleRoi(p1: Point2D, p2: Point2D, instance?: DicomInstanc
     meanHu: mean,
     minHu: min === Infinity ? 0 : min,
     maxHu: max === -Infinity ? 0 : max,
-    stdDevHu: stdDev
+    stdDevHu: stdDev,
+    histogram: { bins, minHu: min, maxHu: max, count }
   };
 }
 
@@ -883,6 +1058,7 @@ function calculateEllipseRoi(p1: Point2D, p2: Point2D, instance?: DicomInstance)
   let count = 0;
   let min = Infinity;
   let max = -Infinity;
+  const values: number[] = [];
 
   for (let y = minY; y <= maxY; y++) {
     const rowOffset = y * instance.columns;
@@ -894,6 +1070,7 @@ function calculateEllipseRoi(p1: Point2D, p2: Point2D, instance?: DicomInstance)
         const hu = huData[rowOffset + x];
         sum += hu;
         count++;
+        values.push(hu);
         if (hu < min) min = hu;
         if (hu > max) max = hu;
       }
@@ -905,19 +1082,19 @@ function calculateEllipseRoi(p1: Point2D, p2: Point2D, instance?: DicomInstance)
   const mean = sum / count;
 
   let varSum = 0;
-  for (let y = minY; y <= maxY; y++) {
-    const rowOffset = y * instance.columns;
-    const dy = (y - cy) / ry;
-    const dySq = dy * dy;
-    for (let x = minX; x <= maxX; x++) {
-      const dx = (x - cx) / rx;
-      if (dx * dx + dySq <= 1.0) {
-        const hu = huData[rowOffset + x];
-        varSum += Math.pow(hu - mean, 2);
-      }
-    }
+  for (const hu of values) {
+    varSum += Math.pow(hu - mean, 2);
   }
   const stdDev = Math.sqrt(varSum / count);
+
+  // 16-bin Histogram
+  const numBins = 16;
+  const bins = new Array(numBins).fill(0);
+  const range = Math.max(1, max - min);
+  for (const hu of values) {
+    const binIdx = Math.min(numBins - 1, Math.floor(((hu - min) / range) * numBins));
+    bins[binIdx]++;
+  }
 
   const rowSpacing = instance.pixelSpacing?.[0] || 1;
   const colSpacing = instance.pixelSpacing?.[1] || 1;
@@ -930,7 +1107,8 @@ function calculateEllipseRoi(p1: Point2D, p2: Point2D, instance?: DicomInstance)
     meanHu: mean,
     minHu: min === Infinity ? 0 : min,
     maxHu: max === -Infinity ? 0 : max,
-    stdDevHu: stdDev
+    stdDevHu: stdDev,
+    histogram: { bins, minHu: min, maxHu: max, count }
   };
 }
 

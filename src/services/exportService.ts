@@ -34,17 +34,23 @@ export class ExportService {
     study: DicomStudy,
     currentInstance: DicomInstance,
     measurements: Measurement[],
-    snapshotCanvasUrl?: string
+    snapshotCanvasUrl?: string,
+    anonymize: boolean = false
   ): void {
     const printWindow = window.open('', '_blank', 'width=900,height=800');
     if (!printWindow) return;
+
+    const patientName = anonymize ? 'ANONYMOUS' : study.patientName.replace(/\^/g, ' ');
+    const patientId = anonymize ? 'ANON_ID' : study.patientId;
 
     const measurementRows = measurements.map((m, idx) => {
       let details = '';
       if (m.type === 'distance') details = `Distance: <strong>${m.distanceMm?.toFixed(2)} mm</strong>`;
       else if (m.type === 'angle') details = `Angle: <strong>${m.angleDeg?.toFixed(1)}°</strong>`;
       else if (m.type === 'cobb_angle') details = `Cobb Angle: <strong>${m.cobbDeg?.toFixed(1)}°</strong>`;
-      else if (m.roiValues) {
+      else if (m.type === 'ctr' && m.ctrValues) {
+        details = `Cardiothoracic Ratio (CTR): <strong>${(m.ctrValues.ratio * 100).toFixed(1)}%</strong> (${m.ctrValues.cardiacDiameterMm.toFixed(1)} mm / ${m.ctrValues.thoracicDiameterMm.toFixed(1)} mm) - <span style="color:${m.ctrValues.isCardiomegaly ? '#e11d48' : '#16a34a'};font-weight:bold;">${m.ctrValues.isCardiomegaly ? 'Cardiomegaly (≥ 50%)' : 'Normal (< 50%)'}</span>`;
+      } else if (m.roiValues) {
         details = `Area: <strong>${m.roiValues.areaCm2.toFixed(2)} cm²</strong> | Mean: <strong>${m.roiValues.meanHu.toFixed(1)} HU</strong> | StdDev: <strong>${m.roiValues.stdDevHu.toFixed(1)}</strong> [${m.roiValues.minHu} .. ${m.roiValues.maxHu} HU]`;
       } else if (m.type === 'hu_probe') {
         details = `HU Probe: <strong>${m.probeHu} HU</strong> (X:${m.probeCoord?.x}, Y:${m.probeCoord?.y})`;
