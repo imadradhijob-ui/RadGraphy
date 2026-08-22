@@ -492,7 +492,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
         drawCrosshairMark(ctx, p.x, p.y);
         if (m.probeHu !== undefined) {
           const tissue = classifyTissueFromHu(m.probeHu);
-          const badge = `${m.probeHu >= 0 ? '+' : ''}${m.probeHu} HU\n${tissue.name} (${tissue.arabic})`;
+          const badge = `${m.probeHu >= 0 ? '+' : ''}${m.probeHu} HU\n${tissue.name}`;
           drawMultiLineBadge(ctx, badge, p.x + 12, p.y - 12);
         }
       }
@@ -503,7 +503,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       const scr = imageToScreenCoord(hoveredPixelCoord.x, hoveredPixelCoord.y);
       drawCrosshairMark(ctx, scr.x, scr.y);
       const tissue = classifyTissueFromHu(hoveredHu);
-      const liveBadge = `HU: ${hoveredHu >= 0 ? '+' : ''}${hoveredHu} [X:${hoveredPixelCoord.x}, Y:${hoveredPixelCoord.y}]\n${tissue.name} (${tissue.arabic})`;
+      const liveBadge = `HU: ${hoveredHu >= 0 ? '+' : ''}${hoveredHu} [X:${hoveredPixelCoord.x}, Y:${hoveredPixelCoord.y}]\n${tissue.name}`;
       drawMultiLineBadge(ctx, liveBadge, scr.x + 15, scr.y - 15);
     }
 
@@ -666,7 +666,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
           points: [imgCoord],
           probeHu: hu,
           probeCoord: { x: Math.round(imgCoord.x), y: Math.round(imgCoord.y) },
-          tissueName: `${tissue.name} (${tissue.arabic})`,
+          tissueName: tissue.name,
           isFinished: true
         });
       }

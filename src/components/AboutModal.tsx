@@ -16,7 +16,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
         <div className="h-12 bg-radiant-darkest border-b border-radiant-border px-4 flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-sm text-cyan-400">
             <Activity className="w-5 h-5 text-cyan-300 animate-pulse" />
-            <span>About RadGraph Medical Workstation</span>
+            <span>About RadGraph DICOM Viewer @Alshaab Hos</span>
           </div>
 
           <button
@@ -34,8 +34,8 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
               <Activity className="w-7 h-7 text-white" />
             </div>
             <div>
-              <h3 className="font-bold text-base text-slate-100">RadGraph Medical Workstation</h3>
-              <p className="text-[11px] text-cyan-400 font-mono">Version: v0.0.01 (Diagnostic Imaging Edition)</p>
+              <h3 className="font-bold text-base text-slate-100">RadGraph DICOM Viewer @Alshaab Hos</h3>
+              <p className="text-[11px] text-cyan-400 font-mono">Version: v1.0.0 (Alshaab Hospital Edition)</p>
             </div>
           </div>
 

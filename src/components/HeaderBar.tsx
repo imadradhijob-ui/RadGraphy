@@ -52,7 +52,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       {/* Brand & App Title */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-700 px-2.5 py-1 rounded shadow-sm text-white font-bold text-sm tracking-wide">
-          <span>RadGraph</span>
+          <span>RadGraph DICOM Viewer @Alshaab Hos</span>
           <span className="text-[10px] font-mono bg-cyan-950/60 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-400/40">
             v1.0.0
           </span>

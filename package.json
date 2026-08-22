@@ -2,7 +2,7 @@
   "name": "radgraph",
   "private": true,
   "version": "1.0.0",
-  "description": "RadGraph Medical Diagnostic PACS Workstation & Imaging Platform",
+  "description": "RadGraph DICOM Viewer @Alshaab Hos - v1.0.0",
   "author": "RadGraph Medical",
   "type": "module",
   "main": "electron/main.cjs",
@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "com.radgraph.medical.workstation",
-    "productName": "RadGraph PACS Workstation",
+    "productName": "RadGraph DICOM Viewer @Alshaab Hos",
     "copyright": "Copyright © 2026 RadGraph Medical Platform",
     "asar": true,
     "directories": {
@@ -38,10 +38,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "RadGraph PACS Workstation",
+      "shortcutName": "RadGraph DICOM Viewer @Alshaab Hos",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "uninstallDisplayName": "RadGraph PACS Workstation"
+      "uninstallDisplayName": "RadGraph DICOM Viewer @Alshaab Hos"
     }
   },
   "dependencies": {

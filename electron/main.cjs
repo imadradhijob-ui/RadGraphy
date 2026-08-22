@@ -13,7 +13,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0B0F17',
-    title: 'RadGraph Medical Workstation',
+    title: 'RadGraph DICOM Viewer @Alshaab Hos - v1.0.0',
     icon: path.join(__dirname, '../public/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
