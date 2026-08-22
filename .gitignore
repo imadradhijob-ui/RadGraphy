@@ -11,8 +11,10 @@ lerna-debug.log*
 node_modules
 dist
 dist-electron
-dist-ssr
+dist_installer
+dist_app
 release
+*.exe
 *.local
 tsconfig.tsbuildinfo
 

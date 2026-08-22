@@ -1,7 +1,9 @@
 {
   "name": "radgraph",
   "private": true,
-  "version": "0.0.01",
+  "version": "1.0.0",
+  "description": "RadGraph Medical Diagnostic PACS Workstation & Imaging Platform",
+  "author": "RadGraph Medical",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -10,7 +12,37 @@
     "preview": "vite preview",
     "electron:dev": "vite",
     "electron:start": "electron .",
-    "electron:build": "vite build && electron-builder"
+    "electron:build": "npm run build && electron-builder --win nsis",
+    "dist": "npm run build && electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "com.radgraph.medical.workstation",
+    "productName": "RadGraph PACS Workstation",
+    "copyright": "Copyright © 2026 RadGraph Medical Platform",
+    "asar": true,
+    "directories": {
+      "output": "dist_installer",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "RadGraph PACS Workstation",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "RadGraph PACS Workstation"
+    }
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -29,6 +61,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.20",
     "electron": "^33.2.1",
+    "electron-builder": "^26.15.3",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
     "typescript": "~5.6.2",
