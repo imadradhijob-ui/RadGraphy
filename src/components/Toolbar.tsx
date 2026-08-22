@@ -109,6 +109,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   const [showFilterMenu, setShowFilterMenu] = useState(false);
   const [showSyncMenu, setShowSyncMenu] = useState(false);
 
+  const isAnyMenuOpen = showGridMenu || showPresetMenu || showLutMenu || showMipMenu || showFilterMenu || showSyncMenu;
+  const closeAllMenus = () => {
+    setShowGridMenu(false);
+    setShowPresetMenu(false);
+    setShowLutMenu(false);
+    setShowMipMenu(false);
+    setShowFilterMenu(false);
+    setShowSyncMenu(false);
+  };
+
   const toolBtnClass = (tool: ToolType) =>
     `flex flex-col items-center justify-center w-12 h-12 rounded transition-all select-none text-[10.5px] gap-1 ${
       activeTool === tool
@@ -120,8 +130,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
     'flex flex-col items-center justify-center w-12 h-12 rounded transition-all select-none text-[10.5px] gap-1 hover:bg-radiant-hover text-slate-300 border border-transparent';
 
   return (
-    <div className="h-14 bg-radiant-panel border-b border-radiant-border flex items-center px-3 gap-1.5 overflow-x-auto relative select-none">
-      {/* 1. Main Navigation Tools (Windowing, Pan, Zoom, Loupe) */}
+    <>
+      {/* Invisible backdrop to dismiss open dropdowns on outside click */}
+      {isAnyMenuOpen && (
+        <div className="fixed inset-0 z-30 bg-transparent" onClick={closeAllMenus} />
+      )}
+
+      <div className="h-14 bg-radiant-panel border-b border-radiant-border flex items-center px-3 gap-1.5 relative z-30 overflow-visible select-none shrink-0">
+        {/* 1. Main Navigation Tools (Windowing, Pan, Zoom, Loupe) */}
       <div className="flex items-center gap-1 pr-2 border-r border-radiant-border">
         <button
           onClick={() => onSelectTool('ww_wl')}
@@ -673,5 +689,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </button>
       </div>
     </div>
-  );
+  </>
+);
 };
