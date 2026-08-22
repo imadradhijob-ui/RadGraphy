@@ -433,7 +433,7 @@ export const App: React.FC = () => {
     >
       {/* Background Streaming Progress Pill */}
       {loadingStatus && (
-        <div className="absolute top-12 right-6 z-50 bg-radiant-card/95 border border-cyan-500/80 rounded-xl shadow-2xl p-3 backdrop-blur-md flex flex-col gap-2 min-w-[280px] animate-fade-in">
+        <div className="fixed bottom-6 right-6 z-50 bg-radiant-card/95 border border-cyan-500/80 rounded-xl shadow-2xl p-3.5 backdrop-blur-md flex flex-col gap-2 min-w-[300px] animate-fade-in pointer-events-none">
           <div className="flex items-center justify-between text-xs font-semibold text-cyan-300">
             <div className="flex items-center gap-2">
               <Loader2 className="w-4 h-4 animate-spin text-cyan-400" />
@@ -452,8 +452,9 @@ export const App: React.FC = () => {
 
       {/* Notification Toast */}
       {notification && (
-        <div className="absolute top-12 left-1/2 -translate-x-1/2 z-50 bg-cyan-900/90 border border-cyan-400 text-white px-4 py-2 rounded-lg shadow-xl text-xs font-semibold backdrop-blur-sm animate-bounce">
-          {notification}
+        <div className="fixed top-36 left-1/2 -translate-x-1/2 z-50 bg-cyan-950/95 border border-cyan-400/80 text-cyan-100 px-5 py-2.5 rounded-xl shadow-[0_10px_30px_rgba(0,0,0,0.8)] text-xs font-semibold backdrop-blur-md flex items-center gap-2 animate-fade-in pointer-events-none">
+          <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+          <span>{notification}</span>
         </div>
       )}
 
