@@ -40,6 +40,7 @@ interface MenuBarProps {
   onToggleMpr: () => void;
   onOpenTags: () => void;
   onOpenAbout: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({
@@ -58,7 +59,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onInvert,
   onToggleMpr,
   onOpenTags,
-  onOpenAbout
+  onOpenAbout,
+  onOpenSettings
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -339,6 +341,36 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         )}
       </div>
 
+      {/* Options & Settings Menu */}
+      <div className="relative">
+        <button
+          onClick={() => handleMenuClick('options')}
+          className={`px-2.5 py-0.5 rounded transition-colors ${openMenu === 'options' ? 'bg-radiant-hover text-cyan-400 font-semibold' : 'hover:bg-radiant-hover text-slate-200'}`}
+        >
+          Options
+        </button>
+        {openMenu === 'options' && (
+          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+            {onOpenSettings && (
+              <button
+                onClick={() => executeAndClose(onOpenSettings)}
+                className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 font-bold text-cyan-300"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>Physician & Institution Settings...</span>
+              </button>
+            )}
+            <button
+              onClick={() => executeAndClose(onOpenTags)}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"
+            >
+              <Info className="w-3.5 h-3.5 text-amber-400" />
+              <span>DICOM Tag Metadata Inspector</span>
+            </button>
+          </div>
+        )}
+      </div>
+
       {/* Help Menu */}
       <div className="relative">
         <button
@@ -354,7 +386,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"
             >
               <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
-              <span>About RadScope Workstation</span>
+              <span>About RadGraph Workstation</span>
             </button>
           </div>
         )}

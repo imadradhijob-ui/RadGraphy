@@ -25,6 +25,7 @@ interface HeaderBarProps {
   onOpenFolderClick: () => void;
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
+  onOpenSettings?: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -36,7 +37,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenFileClick,
   onOpenFolderClick,
   isFullscreen,
-  onToggleFullscreen
+  onToggleFullscreen,
+  onOpenSettings
 }) => {
   return (
     <header className="h-11 bg-radiant-darkest border-b border-radiant-border flex items-center justify-between px-3 select-none text-xs text-slate-200">
@@ -129,6 +131,17 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
         >
           <Download className="w-3.5 h-3.5 text-blue-400" />
         </button>
+
+        {/* Physician & Hospital Profile Settings */}
+        {onOpenSettings && (
+          <button
+            onClick={onOpenSettings}
+            title="Configure Physician & Hospital Profile (Used in Medical Reports)"
+            className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border transition-colors"
+          >
+            <Settings className="w-3.5 h-3.5 text-cyan-400" />
+          </button>
+        )}
 
         {/* Fullscreen Toggle */}
         <button

@@ -13,6 +13,7 @@ import { AboutModal } from './components/AboutModal';
 import { Volume3dModal } from './components/Volume3dModal';
 import { KeyImagesModal } from './components/KeyImagesModal';
 import { ReportGeneratorModal } from './components/ReportGeneratorModal';
+import { SettingsModal } from './components/SettingsModal';
 
 import {
   DicomInstance,
@@ -57,6 +58,7 @@ export const App: React.FC = () => {
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
   const [isAboutModalOpen, setIsAboutModalOpen] = useState<boolean>(false);
   const [is3dModalOpen, setIs3dModalOpen] = useState<boolean>(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
 
   // Streaming Background Loading State
   const [loadingStatus, setLoadingStatus] = useState<{
@@ -469,6 +471,7 @@ export const App: React.FC = () => {
         onOpenFolderClick={handleOpenFolder}
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
 
       {/* 2. Menu Bar */}
@@ -489,6 +492,7 @@ export const App: React.FC = () => {
         onToggleMpr={() => setIsMprActive(!isMprActive)}
         onOpenTags={() => setIsTagModalOpen(true)}
         onOpenAbout={() => setIsAboutModalOpen(true)}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
       />
 
       {/* 3. Main Tool Bar */}
@@ -651,6 +655,13 @@ export const App: React.FC = () => {
         study={activeStudy}
         bookmarks={bookmarks}
         measurements={currentViewport.measurements}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
+      />
+
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        onProfileUpdated={(p) => showNotification(`Saved physician profile for ${p.radiologistName}`)}
       />
 
       <AboutModal
