@@ -1,5 +1,9 @@
 import * as dicomParser from 'dicom-parser';
 import * as dcmjs from 'dcmjs';
+// @ts-ignore
+import * as jpegLosslessLib from 'jpeg-lossless-decoder-js';
+// @ts-ignore
+import * as jpeg from 'jpeg-js';
 import { DicomInstance, DicomSeries, DicomStudy, DicomTag, ModalityType } from '../types/dicom';
 
 export const TAG_NAMES: Record<string, string> = {
@@ -265,6 +269,7 @@ export function parseDicomBufferFast(
     }
   }
 
+  const transferSyntaxUid = getString('x00020010', '00020010', '');
   const rawModality = getString('x00080060', '00080060', rescaleIntercept < -500 ? 'CT' : 'CT').toUpperCase();
   const sopInstanceUid = getString('x00080018', '00080018', `sop_${Date.now()}_${Math.random()}`);
   const seriesInstanceUid = getString('x0020000e', '0020000E', 'series_unknown');
@@ -273,6 +278,7 @@ export function parseDicomBufferFast(
 
   // Store essential raw tags for fast access (avoiding 100K object allocations)
   const rawTags: Record<string, DicomTag> = {
+    '(0002,0010)': { tag: '(0002,0010)', name: 'TransferSyntaxUID', vr: 'UI', value: transferSyntaxUid },
     '(0010,0010)': { tag: '(0010,0010)', name: 'PatientName', vr: 'PN', value: getString('x00100010', '00100010', 'Anonymous') },
     '(0010,0020)': { tag: '(0010,0020)', name: 'PatientID', vr: 'LO', value: getString('x00100020', '00100020', 'NO_ID') },
     '(0010,0030)': { tag: '(0010,0030)', name: 'PatientBirthDate', vr: 'DA', value: getString('x00100030', '00100030', '') },
@@ -324,8 +330,140 @@ export function parseDicomBufferFast(
     frameIndex: 0,
     rawBuffer: byteArray,
     pixelDataOffset,
-    pixelDataLength
+    pixelDataLength,
+    transferSyntaxUid
   };
+}
+
+/**
+ * DICOM RLE Lossless (1.2.840.10008.1.2.5) Decoder
+ */
+function decodeDicomRle(rleBytes: Uint8Array, numPixels: number, bytesPerPixel: number): Uint8Array {
+  const result = new Uint8Array(numPixels * bytesPerPixel);
+  if (rleBytes.length < 64) return result;
+
+  const dataView = new DataView(rleBytes.buffer, rleBytes.byteOffset, rleBytes.byteLength);
+  const numSegments = dataView.getUint32(0, true);
+  if (numSegments === 0 || numSegments > 15) return result;
+
+  const segmentOffsets: number[] = [];
+  for (let s = 0; s < numSegments; s++) {
+    segmentOffsets.push(dataView.getUint32((s + 1) * 4, true));
+  }
+
+  for (let s = 0; s < numSegments && s < bytesPerPixel; s++) {
+    const start = segmentOffsets[s];
+    const end = (s + 1 < numSegments) ? segmentOffsets[s + 1] : rleBytes.length;
+    let inPos = start;
+    let outPos = s;
+
+    while (inPos < end && outPos < result.length) {
+      const header = rleBytes[inPos++];
+      if (header <= 127) {
+        const count = header + 1;
+        for (let k = 0; k < count && inPos < end && outPos < result.length; k++) {
+          result[outPos] = rleBytes[inPos++];
+          outPos += bytesPerPixel;
+        }
+      } else if (header >= 129) {
+        const count = 257 - header;
+        const val = inPos < end ? rleBytes[inPos++] : 0;
+        for (let k = 0; k < count && outPos < result.length; k++) {
+          result[outPos] = val;
+          outPos += bytesPerPixel;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Universal Medical Decompressor: Decodes JPEG Lossless, JPEG Baseline, and RLE
+ */
+function decodeCompressedDicomSlice(
+  compressedBytes: Uint8Array,
+  rows: number,
+  columns: number,
+  bitsAllocated: number,
+  pixelRepresentation: number,
+  transferSyntaxUid?: string
+): Int16Array | Uint16Array | Uint8Array | null {
+  const numPixels = rows * columns;
+  const isLosslessJpeg = !transferSyntaxUid ||
+    transferSyntaxUid === '1.2.840.10008.1.2.4.70' ||
+    transferSyntaxUid === '1.2.840.10008.1.2.4.57';
+  const isBaselineJpeg = transferSyntaxUid === '1.2.840.10008.1.2.4.50' ||
+    transferSyntaxUid === '1.2.840.10008.1.2.4.51';
+  const isRle = transferSyntaxUid === '1.2.840.10008.1.2.5';
+
+  // 1. RLE Decompression
+  if (isRle) {
+    try {
+      const bytesPerPixel = Math.ceil(bitsAllocated / 8);
+      const decodedBytes = decodeDicomRle(compressedBytes, numPixels, bytesPerPixel);
+      if (bitsAllocated === 16) {
+        return pixelRepresentation === 1
+          ? new Int16Array(decodedBytes.buffer, decodedBytes.byteOffset, numPixels)
+          : new Uint16Array(decodedBytes.buffer, decodedBytes.byteOffset, numPixels);
+      } else {
+        return decodedBytes;
+      }
+    } catch (e) {
+      console.warn('RLE decode error:', e);
+    }
+  }
+
+  // 2. JPEG Detection & Decompression
+  const isJpeg = (compressedBytes[0] === 0xFF && compressedBytes[1] === 0xD8) || isLosslessJpeg || isBaselineJpeg;
+
+  if (isJpeg) {
+    // Primary: JPEG Lossless Process 14 (Standard for Hospital CD/DVD Discs)
+    try {
+      // @ts-ignore
+      const DecoderClass = (jpegLosslessLib as any).Decoder || jpegLosslessLib;
+      const decoder = new DecoderClass();
+      const decoded = decoder.decode(
+        compressedBytes.buffer,
+        compressedBytes.byteOffset,
+        compressedBytes.byteLength
+      );
+      if (decoded) {
+        if (bitsAllocated === 16) {
+          const view = (decoded instanceof Uint16Array || decoded instanceof Int16Array)
+            ? decoded
+            : new Uint16Array(decoded.buffer, decoded.byteOffset, Math.min(numPixels, Math.floor(decoded.byteLength / 2)));
+          return pixelRepresentation === 1
+            ? new Int16Array(view.buffer, view.byteOffset, Math.min(numPixels, view.length))
+            : new Uint16Array(view.buffer, view.byteOffset, Math.min(numPixels, view.length));
+        } else {
+          return decoded instanceof Uint8Array
+            ? decoded
+            : new Uint8Array(decoded.buffer, decoded.byteOffset, Math.min(numPixels, decoded.byteLength));
+        }
+      }
+    } catch (losslessErr) {
+      // Fallback: 8-bit Baseline / Lossy JPEG
+      try {
+        const decoded = jpeg.decode(compressedBytes, { useTArray: true, formatAsRGBA: false });
+        if (decoded && decoded.data) {
+          if (bitsAllocated === 16) {
+            const out = pixelRepresentation === 1 ? new Int16Array(numPixels) : new Uint16Array(numPixels);
+            const src = decoded.data;
+            for (let i = 0; i < numPixels && i < src.length; i++) {
+              out[i] = src[i];
+            }
+            return out;
+          } else {
+            return new Uint8Array(decoded.data.buffer, decoded.data.byteOffset, Math.min(numPixels, decoded.data.length));
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -354,41 +492,64 @@ export function getOrDecodeInstancePixels(instance: DicomInstance): {
   const byteArray = ensurePart10Dicom(rawByteArray);
 
   let pixelData: Int16Array | Uint16Array | Uint8Array | null = null;
+  const isCompressed = Boolean(
+    instance.transferSyntaxUid &&
+    instance.transferSyntaxUid !== '1.2.840.10008.1.2' &&
+    instance.transferSyntaxUid !== '1.2.840.10008.1.2.1' &&
+    instance.transferSyntaxUid !== '1.2.840.10008.1.2.2'
+  );
 
-  let offset = instance.pixelDataOffset;
-  let len = instance.pixelDataLength;
-
-  if (offset === undefined || len === undefined || len === 0xffffffff) {
-    try {
-      const dataSet = dicomParser.parseDicom(byteArray);
-      const elem = dataSet.elements['x7fe00010'];
-      if (elem) {
-        offset = elem.dataOffset;
-        len = elem.length;
-      }
-    } catch {}
+  // 1. Try encapsulated decompression first if compressed or undefined length
+  if (isCompressed || instance.pixelDataLength === 0xFFFFFFFF) {
+    pixelData = extractEncapsulatedPixelData(
+      byteArray,
+      numPixels,
+      instance.rows,
+      instance.columns,
+      instance.bitsAllocated,
+      instance.pixelRepresentation,
+      instance.frameIndex || 0,
+      instance.transferSyntaxUid
+    );
   }
 
-  if (offset !== undefined && len !== undefined && len > 0 && len !== 0xffffffff) {
-    const pixelBytes = byteArray.buffer.slice(
-      byteArray.byteOffset + offset,
-      byteArray.byteOffset + offset + len
-    );
+  // 2. Uncompressed Raw Pixel Extraction
+  if (!pixelData || pixelData.length < numPixels) {
+    let offset = instance.pixelDataOffset;
+    let len = instance.pixelDataLength;
 
-    if (instance.bitsAllocated === 16) {
-      if (instance.pixelRepresentation === 1) {
-        pixelData = new Int16Array(pixelBytes, 0, Math.min(numPixels, Math.floor(pixelBytes.byteLength / 2)));
+    if (offset === undefined || len === undefined || len === 0xffffffff) {
+      try {
+        const dataSet = dicomParser.parseDicom(byteArray);
+        const elem = dataSet.elements['x7fe00010'];
+        if (elem) {
+          offset = elem.dataOffset;
+          len = elem.length;
+        }
+      } catch {}
+    }
+
+    if (offset !== undefined && len !== undefined && len > 0 && len !== 0xffffffff) {
+      const pixelBytes = byteArray.buffer.slice(
+        byteArray.byteOffset + offset,
+        byteArray.byteOffset + offset + len
+      );
+
+      if (instance.bitsAllocated === 16) {
+        if (instance.pixelRepresentation === 1) {
+          pixelData = new Int16Array(pixelBytes, 0, Math.min(numPixels, Math.floor(pixelBytes.byteLength / 2)));
+        } else {
+          pixelData = new Uint16Array(pixelBytes, 0, Math.min(numPixels, Math.floor(pixelBytes.byteLength / 2)));
+        }
+      } else if (instance.bitsAllocated === 8) {
+        pixelData = new Uint8Array(pixelBytes, 0, Math.min(numPixels * instance.samplesPerPixel, pixelBytes.byteLength));
       } else {
         pixelData = new Uint16Array(pixelBytes, 0, Math.min(numPixels, Math.floor(pixelBytes.byteLength / 2)));
       }
-    } else if (instance.bitsAllocated === 8) {
-      pixelData = new Uint8Array(pixelBytes, 0, Math.min(numPixels * instance.samplesPerPixel, pixelBytes.byteLength));
-    } else {
-      pixelData = new Uint16Array(pixelBytes, 0, Math.min(numPixels, Math.floor(pixelBytes.byteLength / 2)));
     }
   }
 
-  // Fallback to encapsulated or dcmjs pixel extraction if needed
+  // 3. Fallback to encapsulated or dcmjs pixel extraction if needed
   if (!pixelData || pixelData.length < numPixels) {
     try {
       const dcmData = dcmjs.data.DicomMessage.readFile(byteArray.buffer);
@@ -408,22 +569,28 @@ export function getOrDecodeInstancePixels(instance: DicomInstance): {
     } catch {}
   }
 
+  // 4. Secondary Encapsulated Fallback
   if (!pixelData || pixelData.length === 0) {
     pixelData = extractEncapsulatedPixelData(
       byteArray,
       numPixels,
+      instance.rows,
+      instance.columns,
       instance.bitsAllocated,
       instance.pixelRepresentation,
-      instance.frameIndex || 0
+      instance.frameIndex || 0,
+      instance.transferSyntaxUid
     );
   }
 
-  if (pixelData.length < numPixels) {
+  if (!pixelData || pixelData.length < numPixels) {
     const padded = instance.bitsAllocated === 16
       ? (instance.pixelRepresentation === 1 ? new Int16Array(numPixels) : new Uint16Array(numPixels))
       : new Uint8Array(numPixels);
-    // @ts-ignore
-    padded.set(pixelData);
+    if (pixelData) {
+      // @ts-ignore
+      padded.set(pixelData.subarray(0, numPixels));
+    }
     pixelData = padded;
   }
 
@@ -491,11 +658,37 @@ export function parseDicomBuffer(
 function extractEncapsulatedPixelData(
   byteArray: Uint8Array,
   numPixels: number,
+  rows: number,
+  columns: number,
   bitsAllocated: number,
   pixelRep: number,
-  frameIndex: number = 0
-): Int16Array | Uint16Array | Uint8Array {
-  // Search for DICOM Sequence item tags (FFFE E000)
+  frameIndex: number = 0,
+  transferSyntaxUid?: string
+): Int16Array | Uint16Array | Uint8Array | null {
+  // 1. Try dicomParser fragments first
+  try {
+    const dataSet = dicomParser.parseDicom(byteArray);
+    const pixelElem = dataSet.elements.x7fe00010;
+    if (pixelElem && pixelElem.fragments && pixelElem.fragments.length > 0) {
+      const targetFrag = pixelElem.fragments[frameIndex] || pixelElem.fragments[0];
+      if (targetFrag && targetFrag.length > 0) {
+        const compressedSlice = byteArray.subarray(targetFrag.position, targetFrag.position + targetFrag.length);
+        const decoded = decodeCompressedDicomSlice(
+          compressedSlice,
+          rows,
+          columns,
+          bitsAllocated,
+          pixelRep,
+          transferSyntaxUid
+        );
+        if (decoded && decoded.length >= numPixels) {
+          return decoded;
+        }
+      }
+    }
+  } catch (_) {}
+
+  // 2. Fallback: Search for DICOM Sequence item tags (FFFE E000)
   const items: { offset: number; length: number }[] = [];
   for (let i = 0; i < byteArray.length - 8; i++) {
     if (byteArray[i] === 0xFE && byteArray[i + 1] === 0xFF && byteArray[i + 2] === 0x00 && byteArray[i + 3] === 0xE0) {
@@ -506,7 +699,6 @@ function extractEncapsulatedPixelData(
     }
   }
 
-  // Select target item based on frameIndex (skipping BOT table at items[0] if items.length > 1)
   let targetItem: { offset: number; length: number } | null = null;
   if (items.length > 1) {
     if (items[0].length <= 4 || items.length > 2) {
@@ -519,6 +711,20 @@ function extractEncapsulatedPixelData(
   }
 
   if (targetItem) {
+    const compressedBytes = byteArray.subarray(targetItem.offset, targetItem.offset + targetItem.length);
+    const decoded = decodeCompressedDicomSlice(
+      compressedBytes,
+      rows,
+      columns,
+      bitsAllocated,
+      pixelRep,
+      transferSyntaxUid
+    );
+    if (decoded && decoded.length >= numPixels) {
+      return decoded;
+    }
+
+    // If uncompressed raw bytes within item
     const frameBytes = byteArray.buffer.slice(
       byteArray.byteOffset + targetItem.offset,
       byteArray.byteOffset + targetItem.offset + targetItem.length
@@ -530,7 +736,7 @@ function extractEncapsulatedPixelData(
     }
   }
 
-  return bitsAllocated === 16 ? (pixelRep === 1 ? new Int16Array(numPixels) : new Uint16Array(numPixels)) : new Uint8Array(numPixels);
+  return null;
 }
 
 export function groupInstancesIntoStudies(

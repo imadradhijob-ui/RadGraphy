@@ -36,6 +36,20 @@ declare module 'dcmjs' {
   export const adapters: any;
 }
 
+declare module 'jpeg-lossless-decoder-js' {
+  export class Decoder {
+    constructor();
+    decode(buffer: ArrayBuffer | Uint8Array, offset?: number, length?: number): Uint8Array | Uint16Array | Int16Array;
+  }
+}
+
+declare module 'jpeg-js' {
+  export function decode(
+    jpegData: Buffer | Uint8Array | ArrayBuffer,
+    options?: { useTArray?: boolean; colorTransform?: boolean; formatAsRGBA?: boolean; maxMemoryUsageInMB?: number; maxResolutionInMP?: number }
+  ): { width: number; height: number; data: Uint8Array };
+}
+
 interface Window {
   electronAPI?: {
     openDicomFiles: () => Promise<Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>>;

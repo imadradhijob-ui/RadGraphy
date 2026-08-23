@@ -45,6 +45,7 @@ export interface DicomInstance {
   rawBuffer?: ArrayBuffer | Uint8Array;
   pixelDataOffset?: number;
   pixelDataLength?: number;
+  transferSyntaxUid?: string;
 }
 
 export interface DicomSeries {
