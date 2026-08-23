@@ -1,4 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
+import { ChevronUp, ChevronDown } from 'lucide-react';
 import {
   DicomInstance,
   DicomSeries,
@@ -61,6 +62,98 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
 
   const instanceIndex = viewportState.instanceIndex || 0;
   const currentInstance: DicomInstance | undefined = series?.instances[instanceIndex] || series?.instances[0];
+  const totalInstances = series?.instances?.length || 0;
+
+  // Series Vertical Scrollbar State
+  const scrollbarTrackRef = useRef<HTMLDivElement>(null);
+  const [isScrollDragging, setIsScrollDragging] = useState(false);
+  const [isScrollHovered, setIsScrollHovered] = useState(false);
+  const [scrollTooltipY, setScrollTooltipY] = useState<number | null>(null);
+  const [scrollTooltipIdx, setScrollTooltipIdx] = useState<number | null>(null);
+  const stepIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const stepTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const handleScrollToY = useCallback((clientY: number) => {
+    if (!scrollbarTrackRef.current || totalInstances <= 1) return;
+    const rect = scrollbarTrackRef.current.getBoundingClientRect();
+    const relativeY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    const ratio = rect.height > 0 ? relativeY / rect.height : 0;
+    const targetIdx = Math.max(0, Math.min(totalInstances - 1, Math.round(ratio * (totalInstances - 1))));
+    if (targetIdx !== viewportState.instanceIndex) {
+      onUpdateState({ instanceIndex: targetIdx });
+    }
+    setScrollTooltipY(relativeY);
+    setScrollTooltipIdx(targetIdx);
+  }, [totalInstances, viewportState.instanceIndex, onUpdateState]);
+
+  const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    onActivate();
+    setIsScrollDragging(true);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    handleScrollToY(e.clientY);
+  };
+
+  const handleTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isScrollDragging) {
+      e.stopPropagation();
+      e.preventDefault();
+      handleScrollToY(e.clientY);
+    } else if (scrollbarTrackRef.current) {
+      const rect = scrollbarTrackRef.current.getBoundingClientRect();
+      const relativeY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      const ratio = rect.height > 0 ? relativeY / rect.height : 0;
+      const hoverIdx = Math.max(0, Math.min(totalInstances - 1, Math.round(ratio * (totalInstances - 1))));
+      setScrollTooltipY(relativeY);
+      setScrollTooltipIdx(hoverIdx);
+    }
+  };
+
+  const handleTrackPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isScrollDragging) {
+      e.stopPropagation();
+      setIsScrollDragging(false);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    }
+  };
+
+  const stopStepScroll = useCallback(() => {
+    if (stepTimeoutRef.current) {
+      clearTimeout(stepTimeoutRef.current);
+      stepTimeoutRef.current = null;
+    }
+    if (stepIntervalRef.current) {
+      clearInterval(stepIntervalRef.current);
+      stepIntervalRef.current = null;
+    }
+  }, []);
+
+  const startStepScroll = useCallback((delta: number) => {
+    if (totalInstances <= 1) return;
+    onActivate();
+    const nextIdx = Math.max(0, Math.min(totalInstances - 1, (viewportState.instanceIndex || 0) + delta));
+    onUpdateState({ instanceIndex: nextIdx });
+
+    stopStepScroll();
+    let current = nextIdx;
+    stepTimeoutRef.current = setTimeout(() => {
+      stepIntervalRef.current = setInterval(() => {
+        current = Math.max(0, Math.min(totalInstances - 1, current + delta));
+        onUpdateState({ instanceIndex: current });
+      }, 70);
+    }, 250);
+  }, [totalInstances, viewportState.instanceIndex, onActivate, onUpdateState, stopStepScroll]);
+
+  useEffect(() => {
+    return () => {
+      stopStepScroll();
+    };
+  }, [stopStepScroll]);
 
   // Cine Playback Loop
   useEffect(() => {
@@ -861,6 +954,119 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
           </div>
         </>
       )}
+
+      {/* 4. Medical Vertical Slice Scrollbar */}
+      {series && totalInstances > 1 && (() => {
+        const thumbPercent = Math.max(6, Math.min(30, (1 / totalInstances) * 100));
+        const thumbTopPercent = totalInstances > 1 ? (instanceIndex / (totalInstances - 1)) * (100 - thumbPercent) : 0;
+
+        return (
+          <div
+            className="absolute right-1.5 top-16 bottom-16 w-5 sm:w-6 flex flex-col items-center z-30 select-none pointer-events-auto rounded-full bg-slate-950/70 border border-slate-700/60 backdrop-blur-md shadow-2xl transition-all p-0.5"
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseMove={(e) => e.stopPropagation()}
+            onWheel={handleWheel}
+            onMouseEnter={() => setIsScrollHovered(true)}
+            onMouseLeave={() => {
+              setIsScrollHovered(false);
+              setScrollTooltipIdx(null);
+              setScrollTooltipY(null);
+            }}
+          >
+            {/* Step Up Button */}
+            <button
+              type="button"
+              title="Previous Slice (Step Up)"
+              disabled={instanceIndex <= 0}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                startStepScroll(-1);
+              }}
+              onMouseUp={stopStepScroll}
+              onMouseLeave={stopStepScroll}
+              className={`w-full h-5 flex items-center justify-center rounded-t-full bg-slate-800/80 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors ${
+                instanceIndex <= 0 ? 'opacity-25 cursor-not-allowed' : 'cursor-pointer active:scale-90'
+              }`}
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Scrollbar Track */}
+            <div
+              ref={scrollbarTrackRef}
+              onPointerDown={handleTrackPointerDown}
+              onPointerMove={handleTrackPointerMove}
+              onPointerUp={handleTrackPointerUp}
+              onPointerCancel={handleTrackPointerUp}
+              className="flex-1 w-full relative cursor-pointer flex justify-center py-1 group/track my-0.5"
+            >
+              {/* Visual Track Center Line */}
+              <div className="absolute top-1 bottom-1 w-1 bg-slate-700/60 rounded-full left-1/2 -translate-x-1/2 pointer-events-none group-hover/track:bg-slate-600/80 transition-colors" />
+
+              {/* Draggable Thumb */}
+              <div
+                style={{
+                  height: `${thumbPercent}%`,
+                  top: `${thumbTopPercent}%`
+                }}
+                className={`absolute left-0.5 right-0.5 rounded-full transition-all duration-75 flex items-center justify-center ${
+                  isScrollDragging
+                    ? 'bg-gradient-to-b from-cyan-300 to-cyan-500 shadow-lg shadow-cyan-400/70 scale-105 ring-2 ring-cyan-300/80'
+                    : 'bg-gradient-to-b from-cyan-400 to-cyan-600 hover:from-cyan-300 hover:to-cyan-500 shadow-md shadow-cyan-500/50 hover:brightness-110'
+                }`}
+              >
+                {/* Subtle Tactile Grip */}
+                <div className="flex flex-col gap-0.5 pointer-events-none opacity-80">
+                  <div className="w-2.5 h-0.5 bg-slate-950/70 rounded-full" />
+                  <div className="w-2.5 h-0.5 bg-slate-950/70 rounded-full" />
+                </div>
+              </div>
+
+              {/* Live Tooltip Floating next to scrollbar */}
+              {(isScrollHovered || isScrollDragging) && (
+                <div
+                  style={{
+                    top: scrollTooltipY !== null ? `${scrollTooltipY}px` : `${thumbTopPercent + thumbPercent / 2}%`,
+                    transform: 'translateY(-50%)'
+                  }}
+                  className="absolute right-7 pointer-events-none z-40 bg-slate-950/95 border border-cyan-500 text-cyan-300 px-2 py-1 rounded-md shadow-2xl backdrop-blur-md whitespace-nowrap text-left text-[11px] font-mono flex flex-col gap-0.5"
+                >
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span className="text-cyan-400 font-semibold">Slice:</span>
+                    <span className="text-amber-300">{(scrollTooltipIdx !== null ? scrollTooltipIdx : instanceIndex) + 1}</span>
+                    <span className="text-slate-400">/ {totalInstances}</span>
+                  </div>
+                  {series?.instances[scrollTooltipIdx !== null ? scrollTooltipIdx : instanceIndex]?.sliceLocation !== undefined && (
+                    <div className="text-[10px] text-slate-300">
+                      Loc: {series.instances[scrollTooltipIdx !== null ? scrollTooltipIdx : instanceIndex].sliceLocation?.toFixed(1)} mm
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Step Down Button */}
+            <button
+              type="button"
+              title="Next Slice (Step Down)"
+              disabled={instanceIndex >= totalInstances - 1}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                startStepScroll(1);
+              }}
+              onMouseUp={stopStepScroll}
+              onMouseLeave={stopStepScroll}
+              className={`w-full h-5 flex items-center justify-center rounded-b-full bg-slate-800/80 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors ${
+                instanceIndex >= totalInstances - 1 ? 'opacity-25 cursor-not-allowed' : 'cursor-pointer active:scale-90'
+              }`}
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 };

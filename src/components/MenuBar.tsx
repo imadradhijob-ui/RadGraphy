@@ -386,7 +386,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"
             >
               <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
-              <span>About RadGraph DICOM Viewer @Alshaab Hos</span>
+              <span>About RadGraph Viewer</span>
             </button>
           </div>
         )}

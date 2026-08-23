@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openDicomDirectory: () => ipcRenderer.invoke('dialog:openDicomDirectory'),
   openPath: (targetPath) => ipcRenderer.invoke('system:openPath', targetPath),
   detectOpticalDrives: () => ipcRenderer.invoke('system:detectOpticalDrives'),
+  readOpticalDisc: () => ipcRenderer.invoke('system:readOpticalDisc'),
   pacsEcho: (serverConfig) => ipcRenderer.invoke('pacs:echo', serverConfig),
   pacsSearch: (serverConfig, filters) => ipcRenderer.invoke('pacs:search', serverConfig, filters),
   pacsRetrieve: (serverConfig, studyInstanceUid) => ipcRenderer.invoke('pacs:retrieve', serverConfig, studyInstanceUid),

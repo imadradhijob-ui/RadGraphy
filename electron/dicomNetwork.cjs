@@ -1300,7 +1300,7 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
       resolve(received);
     };
 
-    let timer = setTimeout(cleanup, 30000);
+    let timer = setTimeout(cleanup, 5000);
 
     const presentationContexts = [
       { id: 1, abstractSyntax: '1.2.840.10008.5.1.4.1.2.2.2', transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] },
@@ -1366,10 +1366,10 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
                   sopInstance: cmdMap['(0000,1000)'] || ''
                 };
               }
-              if (status === 0x0000 || (cmdField === 0x8010 && status === 0x0000)) {
+              if (status === 0x0000 || (cmdField === 0x8010 && (status === 0x0000 || status === 0xB000))) {
                 clearTimeout(timer);
                 try { socket.write(buildReleaseRq()); } catch (e) {}
-                setTimeout(cleanup, 50);
+                setTimeout(cleanup, 10);
                 return;
               }
             } else {
@@ -1389,7 +1389,7 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
                   try { onSliceFile(fileObj); } catch (e) {}
                 }
                 clearTimeout(timer);
-                timer = setTimeout(cleanup, 2500);
+                timer = setTimeout(cleanup, 800);
 
                 const rspPdu = buildCStoreRsp(pdvPcId, currentCGetCmd.msgId || 1, 0x0000, currentCGetCmd.sopClass, currentCGetCmd.sopInstance);
                 socket.write(rspPdu);
@@ -1425,9 +1425,25 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     console.warn('[PACS Series Discovery] Failed to query series list:', e);
   }
 
-  // Filter out dose and report series, prioritize image series (CT, MR, DX, CR)
-  const imageSeries = seriesList.filter(s => s.modality !== 'SR' && s.modality !== 'PR');
-  const targetSeriesList = imageSeries.length > 0 ? imageSeries : seriesList;
+  // Filter out dose, protocol, raw reconstruction, and non-image series
+  const imageSeries = seriesList.filter(s => {
+    const desc = (s.seriesDescription || '').toLowerCase();
+    const mod = (s.modality || '').toUpperCase();
+    if (mod === 'SR' || mod === 'PR' || mod === 'KO' || mod === 'DOC' || mod === 'OT') return false;
+    if (desc.includes('raw data') || desc.includes('raw_data') || desc === 'raw') return false;
+    if (desc.includes('patient protocol') || desc.includes('dose report') || desc.includes('dose info') || desc.includes('protocol')) return false;
+    return true;
+  });
+
+  // De-duplicate series by seriesUid
+  const uniqueMap = new Map();
+  const rawList = imageSeries.length > 0 ? imageSeries : seriesList;
+  for (const s of rawList) {
+    if (s.seriesUid && !uniqueMap.has(s.seriesUid)) {
+      uniqueMap.set(s.seriesUid, s);
+    }
+  }
+  const targetSeriesList = Array.from(uniqueMap.values());
 
   // Prioritize primary volumetric series first (Axial > Coronal > Sagittal > Others)
   targetSeriesList.sort((a, b) => {
@@ -1452,14 +1468,15 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
   };
 
   if (targetSeriesList.length > 0) {
-    // 2. Multi-Channel Concurrent DICOM Pipeline (4 Parallel Associations)
-    const MAX_CONCURRENT_CHANNELS = 4;
-    console.log(`[RadiAnt Turbo Pipeline] Launching ${Math.min(MAX_CONCURRENT_CHANNELS, targetSeriesList.length)} parallel DICOM associations for ${targetSeriesList.length} series...`);
+    // 2. High-Speed Multi-Channel Concurrent DICOM Pipeline (up to 8 Parallel Associations)
+    const MAX_CONCURRENT_CHANNELS = 8;
+    console.log(`[RadiAnt Turbo Pipeline] Launching ${Math.min(MAX_CONCURRENT_CHANNELS, targetSeriesList.length)} parallel DICOM associations for ${targetSeriesList.length} diagnostic series...`);
 
     const queue = [...targetSeriesList];
     const runWorkerPool = async () => {
       const workers = [];
-      for (let i = 0; i < Math.min(MAX_CONCURRENT_CHANNELS, targetSeriesList.length); i++) {
+      const numWorkers = Math.min(MAX_CONCURRENT_CHANNELS, targetSeriesList.length);
+      for (let i = 0; i < numWorkers; i++) {
         workers.push((async () => {
           while (queue.length > 0) {
             const nextSer = queue.shift();

@@ -15,7 +15,9 @@ import {
   RotateCcw,
   Sparkles,
   Move,
-  ZoomIn
+  ZoomIn,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 import { DicomSeries, DicomStudy, MprPlane, Point2D } from '../types/dicom';
 import { MprEngine, Volume3D, ProjectionMode } from '../services/mprEngine';
@@ -674,6 +676,105 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     });
   };
 
+  // MPR Plane Vertical Slice Scrollbar State & Handlers
+  const mprScrollTrackRef = useRef<HTMLDivElement>(null);
+  const [isMprScrollDragging, setIsMprScrollDragging] = useState(false);
+  const [isMprScrollHovered, setIsMprScrollHovered] = useState(false);
+  const [mprScrollTooltipY, setMprScrollTooltipY] = useState<number | null>(null);
+  const [mprScrollTooltipIdx, setMprScrollTooltipIdx] = useState<number | null>(null);
+  const mprStepIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const mprStepTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const totalSlices = plane === 'axial' ? (volume?.dimZ || 1) : plane === 'coronal' ? (volume?.dimY || 1) : (volume?.dimX || 1);
+  const currentSliceIdx = plane === 'axial' ? crosshair.z : plane === 'coronal' ? crosshair.y : crosshair.x;
+
+  const setPlaneSlice = useCallback((idx: number) => {
+    const clamped = Math.max(0, Math.min(totalSlices - 1, idx));
+    onUpdateCrosshair(prev => {
+      if (plane === 'axial') return { ...prev, z: clamped };
+      if (plane === 'coronal') return { ...prev, y: clamped };
+      return { ...prev, x: clamped };
+    });
+  }, [plane, totalSlices, onUpdateCrosshair]);
+
+  const handleMprScrollToY = useCallback((clientY: number) => {
+    if (!mprScrollTrackRef.current || totalSlices <= 1) return;
+    const rect = mprScrollTrackRef.current.getBoundingClientRect();
+    const relativeY = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    const ratio = rect.height > 0 ? relativeY / rect.height : 0;
+    const targetIdx = Math.max(0, Math.min(totalSlices - 1, Math.round(ratio * (totalSlices - 1))));
+    setPlaneSlice(targetIdx);
+    setMprScrollTooltipY(relativeY);
+    setMprScrollTooltipIdx(targetIdx);
+  }, [totalSlices, setPlaneSlice]);
+
+  const handleMprTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    setIsMprScrollDragging(true);
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
+    handleMprScrollToY(e.clientY);
+  };
+
+  const handleMprTrackPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isMprScrollDragging) {
+      e.stopPropagation();
+      e.preventDefault();
+      handleMprScrollToY(e.clientY);
+    } else if (mprScrollTrackRef.current) {
+      const rect = mprScrollTrackRef.current.getBoundingClientRect();
+      const relativeY = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+      const ratio = rect.height > 0 ? relativeY / rect.height : 0;
+      const hoverIdx = Math.max(0, Math.min(totalSlices - 1, Math.round(ratio * (totalSlices - 1))));
+      setMprScrollTooltipY(relativeY);
+      setMprScrollTooltipIdx(hoverIdx);
+    }
+  };
+
+  const handleMprTrackPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isMprScrollDragging) {
+      e.stopPropagation();
+      setIsMprScrollDragging(false);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch (_) {}
+    }
+  };
+
+  const stopMprStepScroll = useCallback(() => {
+    if (mprStepTimeoutRef.current) {
+      clearTimeout(mprStepTimeoutRef.current);
+      mprStepTimeoutRef.current = null;
+    }
+    if (mprStepIntervalRef.current) {
+      clearInterval(mprStepIntervalRef.current);
+      mprStepIntervalRef.current = null;
+    }
+  }, []);
+
+  const startMprStepScroll = useCallback((delta: number) => {
+    if (totalSlices <= 1) return;
+    const nextIdx = Math.max(0, Math.min(totalSlices - 1, currentSliceIdx + delta));
+    setPlaneSlice(nextIdx);
+
+    stopMprStepScroll();
+    let current = nextIdx;
+    mprStepTimeoutRef.current = setTimeout(() => {
+      mprStepIntervalRef.current = setInterval(() => {
+        current = Math.max(0, Math.min(totalSlices - 1, current + delta));
+        setPlaneSlice(current);
+      }, 70);
+    }, 250);
+  }, [totalSlices, currentSliceIdx, setPlaneSlice, stopMprStepScroll]);
+
+  useEffect(() => {
+    return () => {
+      stopMprStepScroll();
+    };
+  }, [stopMprStepScroll]);
+
   return (
     <div
       ref={containerRef}
@@ -726,6 +827,112 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         {plane === 'coronal' && `Y: ${crosshair.y + 1} / ${volume?.dimY || 1}`}
         {plane === 'sagittal' && `X: ${crosshair.x + 1} / ${volume?.dimX || 1}`}
       </div>
+
+      {/* Vertical MPR Slice Scrollbar */}
+      {volume && totalSlices > 1 && (() => {
+        const thumbPercent = Math.max(6, Math.min(30, (1 / totalSlices) * 100));
+        const thumbTopPercent = totalSlices > 1 ? (currentSliceIdx / (totalSlices - 1)) * (100 - thumbPercent) : 0;
+
+        return (
+          <div
+            className="absolute right-1.5 top-12 bottom-12 w-5 sm:w-6 flex flex-col items-center z-30 select-none pointer-events-auto rounded-full bg-slate-950/70 border border-slate-700/60 backdrop-blur-md shadow-2xl transition-all p-0.5"
+            onMouseDown={(e) => e.stopPropagation()}
+            onMouseMove={(e) => e.stopPropagation()}
+            onWheel={handleWheel}
+            onMouseEnter={() => setIsMprScrollHovered(true)}
+            onMouseLeave={() => {
+              setIsMprScrollHovered(false);
+              setMprScrollTooltipIdx(null);
+              setMprScrollTooltipY(null);
+            }}
+          >
+            {/* Step Up */}
+            <button
+              type="button"
+              title="Previous Slice (Step Up)"
+              disabled={currentSliceIdx <= 0}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                startMprStepScroll(-1);
+              }}
+              onMouseUp={stopMprStepScroll}
+              onMouseLeave={stopMprStepScroll}
+              className={`w-full h-5 flex items-center justify-center rounded-t-full bg-slate-800/80 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors ${
+                currentSliceIdx <= 0 ? 'opacity-25 cursor-not-allowed' : 'cursor-pointer active:scale-90'
+              }`}
+            >
+              <ChevronUp className="w-3.5 h-3.5" />
+            </button>
+
+            {/* Scrollbar Track */}
+            <div
+              ref={mprScrollTrackRef}
+              onPointerDown={handleMprTrackPointerDown}
+              onPointerMove={handleMprTrackPointerMove}
+              onPointerUp={handleMprTrackPointerUp}
+              onPointerCancel={handleMprTrackPointerUp}
+              className="flex-1 w-full relative cursor-pointer flex justify-center py-1 group/track my-0.5"
+            >
+              <div className="absolute top-1 bottom-1 w-1 bg-slate-700/60 rounded-full left-1/2 -translate-x-1/2 pointer-events-none group-hover/track:bg-slate-600/80 transition-colors" />
+
+              {/* Draggable Thumb */}
+              <div
+                style={{
+                  height: `${thumbPercent}%`,
+                  top: `${thumbTopPercent}%`
+                }}
+                className={`absolute left-0.5 right-0.5 rounded-full transition-all duration-75 flex items-center justify-center ${
+                  isMprScrollDragging
+                    ? 'bg-gradient-to-b from-cyan-300 to-cyan-500 shadow-lg shadow-cyan-400/70 scale-105 ring-2 ring-cyan-300/80'
+                    : 'bg-gradient-to-b from-cyan-400 to-cyan-600 hover:from-cyan-300 hover:to-cyan-500 shadow-md shadow-cyan-500/50 hover:brightness-110'
+                }`}
+              >
+                <div className="flex flex-col gap-0.5 pointer-events-none opacity-80">
+                  <div className="w-2.5 h-0.5 bg-slate-950/70 rounded-full" />
+                  <div className="w-2.5 h-0.5 bg-slate-950/70 rounded-full" />
+                </div>
+              </div>
+
+              {/* Live Tooltip Floating next to scrollbar */}
+              {(isMprScrollHovered || isMprScrollDragging) && (
+                <div
+                  style={{
+                    top: mprScrollTooltipY !== null ? `${mprScrollTooltipY}px` : `${thumbTopPercent + thumbPercent / 2}%`,
+                    transform: 'translateY(-50%)'
+                  }}
+                  className="absolute right-7 pointer-events-none z-40 bg-slate-950/95 border border-cyan-500 text-cyan-300 px-2 py-1 rounded-md shadow-2xl backdrop-blur-md whitespace-nowrap text-left text-[11px] font-mono flex flex-col gap-0.5"
+                >
+                  <div className="font-bold text-white flex items-center gap-1.5">
+                    <span className="text-cyan-400 font-semibold">{plane.toUpperCase()}:</span>
+                    <span className="text-amber-300">{(mprScrollTooltipIdx !== null ? mprScrollTooltipIdx : currentSliceIdx) + 1}</span>
+                    <span className="text-slate-400">/ {totalSlices}</span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Step Down */}
+            <button
+              type="button"
+              title="Next Slice (Step Down)"
+              disabled={currentSliceIdx >= totalSlices - 1}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                startMprStepScroll(1);
+              }}
+              onMouseUp={stopMprStepScroll}
+              onMouseLeave={stopMprStepScroll}
+              className={`w-full h-5 flex items-center justify-center rounded-b-full bg-slate-800/80 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors ${
+                currentSliceIdx >= totalSlices - 1 ? 'opacity-25 cursor-not-allowed' : 'cursor-pointer active:scale-90'
+              }`}
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 };

@@ -415,7 +415,7 @@ export const App: React.FC = () => {
     if ((window as any).electronAPI?.closeWindow) {
       (window as any).electronAPI.closeWindow();
     } else {
-      if (confirm('Are you sure you want to exit the RadGraph PACS Workstation?')) {
+      if (confirm('Are you sure you want to exit RadGraph Viewer?')) {
         window.close();
         window.location.href = 'about:blank';
       }

@@ -1,8 +1,8 @@
 {
   "name": "radgraph",
   "private": true,
-  "version": "1.0.0",
-  "description": "RadGraph DICOM Viewer @Alshaab Hos - v1.0.0",
+  "version": "0.0.2",
+  "description": "RadGraph Viewer - v0.0.2",
   "author": "RadGraph Medical",
   "type": "module",
   "main": "electron/main.cjs",
@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "com.radgraph.medical.workstation",
-    "productName": "RadGraph DICOM Viewer @Alshaab Hos",
+    "productName": "RadGraph Viewer",
     "copyright": "Copyright © 2026 RadGraph Medical Platform",
     "asar": true,
     "directories": {
@@ -38,10 +38,10 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "RadGraph DICOM Viewer @Alshaab Hos",
+      "shortcutName": "RadGraph Viewer",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "uninstallDisplayName": "RadGraph DICOM Viewer @Alshaab Hos"
+      "uninstallDisplayName": "RadGraph Viewer"
     }
   },
   "dependencies": {

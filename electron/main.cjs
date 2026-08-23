@@ -13,7 +13,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0B0F17',
-    title: 'RadGraph DICOM Viewer @Alshaab Hos - v1.0.0',
+    title: 'RadGraph Viewer - v0.0.2',
     icon: path.join(__dirname, '../public/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -138,32 +138,100 @@ ipcMain.handle('system:openPath', async (event, targetPath) => {
   return [];
 });
 
-ipcMain.handle('system:detectOpticalDrives', async () => {
+function findReadyOpticalDrive() {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
-      resolve([]);
+      resolve(null);
       return;
     }
 
-    exec('wmic logicaldisk where DriveType=5 get DeviceID, VolumeName, Description', (err, stdout) => {
-      if (err) {
-        resolve([]);
-        return;
+    // 1. Try PowerShell Get-CimInstance Win32_CDROMDrive
+    exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Select-Object Drive, MediaLoaded, Name, VolumeName | ConvertTo-Json"', { timeout: 4000 }, (err, stdout) => {
+      try {
+        if (!err && stdout && stdout.trim()) {
+          let data = JSON.parse(stdout.trim());
+          if (!Array.isArray(data)) data = [data];
+          for (const item of data) {
+            const drive = item.Drive || (item.DeviceID ? item.DeviceID.match(/([A-Z]:)/)?.[1] : null);
+            if (drive && (item.MediaLoaded === true || item.MediaLoaded === 'True')) {
+              const root = drive.endsWith('\\') ? drive : drive + '\\';
+              try {
+                if (fs.existsSync(root)) {
+                  const files = fs.readdirSync(root);
+                  if (files.length > 0) {
+                    return resolve({
+                      driveLetter: drive.replace(/\\$/, ''),
+                      name: item.Name || 'CD/DVD Drive',
+                      volumeName: item.VolumeName || 'DICOM_DISC',
+                      rootPath: root
+                    });
+                  }
+                }
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+
+      // 2. Fallback: Check drive letters D..Z with fs.readdirSync and look for DICOMDIR or readable files
+      for (let i = 68; i <= 90; i++) {
+        const letter = String.fromCharCode(i) + ':';
+        const root = letter + '\\';
+        try {
+          if (fs.existsSync(root)) {
+            const files = fs.readdirSync(root);
+            const hasDicomDir = files.some(f => f.toUpperCase() === 'DICOMDIR');
+            const hasDicomFolder = files.some(f => f.toUpperCase() === 'DICOM');
+            if (hasDicomDir || hasDicomFolder || files.length > 0) {
+              return resolve({
+                driveLetter: letter,
+                name: 'Optical Disc Drive',
+                volumeName: 'DICOM_MEDIA',
+                rootPath: root
+              });
+            }
+          }
+        } catch (_) {}
       }
 
-      const lines = stdout.split('\n').filter(l => l.trim().length > 0).slice(1);
-      const drives = lines.map(line => {
-        const parts = line.trim().split(/\s{2,}/);
-        return {
-          driveLetter: parts[1] || parts[0] || 'D:',
-          name: parts[0] || 'CD/DVD Drive',
-          volumeName: parts[2] || 'DISC_MEDIA'
-        };
-      });
-
-      resolve(drives);
+      resolve(null);
     });
   });
+}
+
+ipcMain.handle('system:detectOpticalDrives', async () => {
+  const ready = await findReadyOpticalDrive();
+  if (ready) {
+    return [{
+      driveLetter: ready.driveLetter,
+      name: ready.name,
+      volumeName: ready.volumeName
+    }];
+  }
+  return [];
+});
+
+ipcMain.handle('system:readOpticalDisc', async () => {
+  const readyDrive = await findReadyOpticalDrive();
+  if (!readyDrive) {
+    return {
+      success: false,
+      detected: false,
+      message: 'No CD/DVD disc was detected in the drive. Please make sure the patient disc is inserted properly.'
+    };
+  }
+
+  const filesList = [];
+  scanDirectoryRecursively(readyDrive.rootPath, filesList);
+
+  return {
+    success: filesList.length > 0,
+    detected: true,
+    driveLetter: readyDrive.driveLetter,
+    volumeName: readyDrive.volumeName,
+    count: filesList.length,
+    files: filesList
+  };
 });
 
 // Native DICOM PACS DIMSE Handlers

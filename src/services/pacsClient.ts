@@ -525,7 +525,7 @@ export class PacsService {
                       // Asynchronously cache slice to local storage (0ms next time)
                       LocalDicomCache.saveSlice(result.studyInstanceUid, msg.file.fileName, rawBuf);
 
-                      // As soon as the first slice arrives (< 0.2s), display study right away!
+                      // As soon as the first slice arrives (< 0.1s), display study immediately!
                       if (!firstBatchTriggered && allInstances.length >= 1 && onFirstBatch) {
                         firstBatchTriggered = true;
                         const initialGrouped = groupInstancesIntoStudies(
@@ -536,7 +536,7 @@ export class PacsService {
                         if (initialGrouped.length > 0) {
                           onFirstBatch(initialGrouped[0]);
                         }
-                      } else if (firstBatchTriggered && onBatchUpdate && (allInstances.length % 10 === 0)) {
+                      } else if (firstBatchTriggered && onBatchUpdate && (allInstances.length % 25 === 0)) {
                         const updated = groupInstancesIntoStudies(
                           [...allInstances],
                           'pacs',
@@ -546,7 +546,9 @@ export class PacsService {
                           onBatchUpdate(updated[0]);
                         }
                       }
-                      onProgress(Math.min(95, 30 + Math.round(allInstances.length * 1.5)), `Streaming slice #${allInstances.length}...`);
+                      if (allInstances.length % 5 === 0 || allInstances.length <= 10) {
+                        onProgress(Math.min(98, 20 + Math.round((allInstances.length / Math.max(1, result.numberOfInstances || 200)) * 75)), `Streaming ${allInstances.length} slices...`);
+                      }
                     }
                   }
                 } catch (e) {}

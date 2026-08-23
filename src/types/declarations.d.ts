@@ -42,6 +42,7 @@ interface Window {
     openDicomDirectory: () => Promise<Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>>;
     openPath: (targetPath: string) => Promise<Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>>;
     detectOpticalDrives: () => Promise<Array<{ driveLetter: string; name: string; volumeName: string }>>;
+    readOpticalDisc: () => Promise<{ success: boolean; detected: boolean; driveLetter?: string; volumeName?: string; count?: number; files?: Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>; message?: string }>;
     pacsEcho: (serverConfig: any) => Promise<{ success: boolean; message: string; responseTimeMs: number }>;
     pacsSearch: (serverConfig: any, filters: any) => Promise<any[]>;
     pacsRetrieve: (serverConfig: any, studyInstanceUid: string) => Promise<{ success: boolean; count: number; files: Array<{ fileName: string; buffer: string; size: number }> }>;
