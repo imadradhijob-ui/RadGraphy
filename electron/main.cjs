@@ -13,7 +13,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0B0F17',
-    title: 'RadGraph Viewer - v0.0.2',
+    title: 'RadGraph Viewer - v0.0.3',
     icon: path.join(__dirname, '../public/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

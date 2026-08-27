@@ -1,8 +1,8 @@
 {
   "name": "radgraph",
   "private": true,
-  "version": "0.0.2",
-  "description": "RadGraph Viewer - v0.0.2",
+  "version": "0.0.3",
+  "description": "RadGraph Viewer - v0.0.3",
   "author": "RadGraph Medical",
   "type": "module",
   "main": "electron/main.cjs",

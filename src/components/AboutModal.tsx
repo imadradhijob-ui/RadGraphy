@@ -35,7 +35,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
             </div>
             <div>
               <h3 className="font-bold text-base text-slate-100">RadGraph Viewer</h3>
-              <p className="text-[11px] text-cyan-400 font-mono">Version: v0.0.2</p>
+              <p className="text-[11px] text-cyan-400 font-mono">Version: v0.0.3</p>
             </div>
           </div>
 
