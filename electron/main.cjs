@@ -13,7 +13,7 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0B0F17',
-    title: 'RadGraph Viewer - v0.0.3',
+    title: 'RadGraph Viewer - v0.0.4',
     icon: path.join(__dirname, '../public/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -49,18 +49,21 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Recursive folder scanner
-function scanDirectoryRecursively(dirPath, filesList = []) {
+// Recursive folder scanner with depth limit and cancellation check
+function scanDirectoryRecursively(dirPath, filesList = [], currentDepth = 0, shouldAbort = () => false) {
+  if (currentDepth > 8 || shouldAbort()) return filesList;
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of entries) {
+      if (shouldAbort()) break;
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
-        scanDirectoryRecursively(fullPath, filesList);
+        scanDirectoryRecursively(fullPath, filesList, currentDepth + 1, shouldAbort);
       } else if (entry.isFile()) {
         try {
           const stats = fs.statSync(fullPath);
-          if (stats.size >= 8) {
+          // Only read potential DICOM files (under 60MB, >= 8 bytes)
+          if (stats.size >= 8 && stats.size <= 60 * 1024 * 1024) {
             const data = fs.readFileSync(fullPath);
             filesList.push({
               fileName: entry.name,
@@ -138,6 +141,8 @@ ipcMain.handle('system:openPath', async (event, targetPath) => {
   return [];
 });
 
+let isOpticalScanCancelled = false;
+
 function findReadyOpticalDrive() {
   return new Promise((resolve) => {
     if (process.platform !== 'win32') {
@@ -145,15 +150,15 @@ function findReadyOpticalDrive() {
       return;
     }
 
-    // 1. Try PowerShell Get-CimInstance Win32_CDROMDrive
-    exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Select-Object Drive, MediaLoaded, Name, VolumeName | ConvertTo-Json"', { timeout: 4000 }, (err, stdout) => {
+    // 1. Try PowerShell Get-CimInstance Win32_CDROMDrive strictly checking MediaLoaded
+    exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Where-Object { $_.MediaLoaded -eq $true } | Select-Object Drive, Name, VolumeName | ConvertTo-Json"', { timeout: 3000 }, (err, stdout) => {
       try {
         if (!err && stdout && stdout.trim()) {
           let data = JSON.parse(stdout.trim());
           if (!Array.isArray(data)) data = [data];
           for (const item of data) {
             const drive = item.Drive || (item.DeviceID ? item.DeviceID.match(/([A-Z]:)/)?.[1] : null);
-            if (drive && (item.MediaLoaded === true || item.MediaLoaded === 'True')) {
+            if (drive) {
               const root = drive.endsWith('\\') ? drive : drive + '\\';
               try {
                 if (fs.existsSync(root)) {
@@ -173,28 +178,57 @@ function findReadyOpticalDrive() {
         }
       } catch (_) {}
 
-      // 2. Fallback: Check drive letters D..Z with fs.readdirSync and look for DICOMDIR or readable files
-      for (let i = 68; i <= 90; i++) {
-        const letter = String.fromCharCode(i) + ':';
-        const root = letter + '\\';
+      // 2. Also check LogicalDisk for DriveType 5 (Compact Disc)
+      exec('powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DriveType = 5\\" | Select-Object DeviceID, VolumeName | ConvertTo-Json"', { timeout: 2500 }, (err2, stdout2) => {
         try {
-          if (fs.existsSync(root)) {
-            const files = fs.readdirSync(root);
-            const hasDicomDir = files.some(f => f.toUpperCase() === 'DICOMDIR');
-            const hasDicomFolder = files.some(f => f.toUpperCase() === 'DICOM');
-            if (hasDicomDir || hasDicomFolder || files.length > 0) {
-              return resolve({
-                driveLetter: letter,
-                name: 'Optical Disc Drive',
-                volumeName: 'DICOM_MEDIA',
-                rootPath: root
-              });
+          if (!err2 && stdout2 && stdout2.trim()) {
+            let data = JSON.parse(stdout2.trim());
+            if (!Array.isArray(data)) data = [data];
+            for (const item of data) {
+              const drive = item.DeviceID;
+              if (drive) {
+                const root = drive.endsWith('\\') ? drive : drive + '\\';
+                try {
+                  if (fs.existsSync(root)) {
+                    const files = fs.readdirSync(root);
+                    if (files.length > 0) {
+                      return resolve({
+                        driveLetter: drive.replace(/\\$/, ''),
+                        name: 'Optical CD/DVD Drive',
+                        volumeName: item.VolumeName || 'DICOM_DISC',
+                        rootPath: root
+                      });
+                    }
+                  }
+                } catch (_) {}
+              }
             }
           }
         } catch (_) {}
-      }
 
-      resolve(null);
+        // 3. Fallback: Check letters D..Z ONLY if an actual DICOMDIR file or DICOM folder exists at root
+        // NEVER treat an ordinary drive as a disc just because files exist!
+        for (let i = 68; i <= 90; i++) {
+          const letter = String.fromCharCode(i) + ':';
+          const root = letter + '\\';
+          try {
+            if (fs.existsSync(root)) {
+              const hasDicomDir = fs.existsSync(path.join(root, 'DICOMDIR')) || fs.existsSync(path.join(root, 'dicomdir'));
+              const hasDicomFolder = fs.existsSync(path.join(root, 'DICOM')) || fs.existsSync(path.join(root, 'dicom'));
+              if (hasDicomDir || hasDicomFolder) {
+                return resolve({
+                  driveLetter: letter,
+                  name: 'DICOM Media Drive',
+                  volumeName: 'DICOM_MEDIA',
+                  rootPath: root
+                });
+              }
+            }
+          } catch (_) {}
+        }
+
+        resolve(null);
+      });
     });
   });
 }
@@ -211,7 +245,13 @@ ipcMain.handle('system:detectOpticalDrives', async () => {
   return [];
 });
 
+ipcMain.handle('system:cancelOpticalDisc', async () => {
+  isOpticalScanCancelled = true;
+  return { cancelled: true };
+});
+
 ipcMain.handle('system:readOpticalDisc', async () => {
+  isOpticalScanCancelled = false;
   const readyDrive = await findReadyOpticalDrive();
   if (!readyDrive) {
     return {
@@ -222,7 +262,16 @@ ipcMain.handle('system:readOpticalDisc', async () => {
   }
 
   const filesList = [];
-  scanDirectoryRecursively(readyDrive.rootPath, filesList);
+  scanDirectoryRecursively(readyDrive.rootPath, filesList, 0, () => isOpticalScanCancelled);
+
+  if (isOpticalScanCancelled) {
+    return {
+      success: false,
+      detected: true,
+      cancelled: true,
+      message: 'CD/DVD reading cancelled by user.'
+    };
+  }
 
   return {
     success: filesList.length > 0,

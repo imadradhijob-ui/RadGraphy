@@ -188,16 +188,23 @@ export default defineConfig({
           const path = require('path')
           const { exec } = require('child_process')
 
+          let isAborted = false
+          req.on('close', () => {
+            isAborted = true
+          })
+
           const findDrive = () => new Promise((resolve) => {
             if (process.platform !== 'win32') return resolve(null)
-            exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Select-Object Drive, MediaLoaded, Name, VolumeName | ConvertTo-Json"', { timeout: 4000 }, (err, stdout) => {
+
+            // 1. Check Win32_CDROMDrive strictly with MediaLoaded = true
+            exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Where-Object { $_.MediaLoaded -eq $true } | Select-Object Drive, Name, VolumeName | ConvertTo-Json"', { timeout: 3000 }, (err, stdout) => {
               try {
                 if (!err && stdout && stdout.trim()) {
                   let data = JSON.parse(stdout.trim())
                   if (!Array.isArray(data)) data = [data]
                   for (const item of data) {
                     const drive = item.Drive || (item.DeviceID ? item.DeviceID.match(/([A-Z]:)/)?.[1] : null)
-                    if (drive && (item.MediaLoaded === true || item.MediaLoaded === 'True')) {
+                    if (drive) {
                       const root = drive.endsWith('\\') ? drive : drive + '\\'
                       if (fs.existsSync(root)) {
                         const files = fs.readdirSync(root)
@@ -215,24 +222,55 @@ export default defineConfig({
                 }
               } catch (_) {}
 
-              for (let i = 68; i <= 90; i++) {
-                const letter = String.fromCharCode(i) + ':'
-                const root = letter + '\\'
+              // 2. Check LogicalDisk for DriveType 5 (Compact Disc)
+              exec('powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DriveType = 5\\" | Select-Object DeviceID, VolumeName | ConvertTo-Json"', { timeout: 2500 }, (err2, stdout2) => {
                 try {
-                  if (fs.existsSync(root)) {
-                    const files = fs.readdirSync(root)
-                    if (files.length > 0) {
-                      return resolve({
-                        driveLetter: letter,
-                        name: 'Optical Disc Drive',
-                        volumeName: 'DICOM_MEDIA',
-                        rootPath: root
-                      })
+                  if (!err2 && stdout2 && stdout2.trim()) {
+                    let data = JSON.parse(stdout2.trim())
+                    if (!Array.isArray(data)) data = [data]
+                    for (const item of data) {
+                      const drive = item.DeviceID
+                      if (drive) {
+                        const root = drive.endsWith('\\') ? drive : drive + '\\'
+                        if (fs.existsSync(root)) {
+                          const files = fs.readdirSync(root)
+                          if (files.length > 0) {
+                            return resolve({
+                              driveLetter: drive.replace(/\\$/, ''),
+                              name: 'Optical CD/DVD Drive',
+                              volumeName: item.VolumeName || 'DICOM_DISC',
+                              rootPath: root
+                            })
+                          }
+                        }
+                      }
                     }
                   }
                 } catch (_) {}
-              }
-              resolve(null)
+
+                // 3. Fallback: Check letters D..Z ONLY if an actual DICOMDIR file or DICOM folder exists
+                // NEVER scan ordinary hard drives!
+                for (let i = 68; i <= 90; i++) {
+                  const letter = String.fromCharCode(i) + ':'
+                  const root = letter + '\\'
+                  try {
+                    if (fs.existsSync(root)) {
+                      const hasDicomDir = fs.existsSync(path.join(root, 'DICOMDIR')) || fs.existsSync(path.join(root, 'dicomdir'))
+                      const hasDicomFolder = fs.existsSync(path.join(root, 'DICOM')) || fs.existsSync(path.join(root, 'dicom'))
+                      if (hasDicomDir || hasDicomFolder) {
+                        return resolve({
+                          driveLetter: letter,
+                          name: 'DICOM Media Drive',
+                          volumeName: 'DICOM_MEDIA',
+                          rootPath: root
+                        })
+                      }
+                    }
+                  } catch (_) {}
+                }
+
+                resolve(null)
+              })
             })
           })
 
@@ -241,7 +279,7 @@ export default defineConfig({
           res.setHeader('Connection', 'keep-alive')
 
           const ready = await findDrive()
-          if (!ready) {
+          if (!ready || isAborted) {
             res.write(`data: ${JSON.stringify({ type: 'not_detected', message: 'No CD/DVD disc was detected in the drive.' })}\n\n`)
             res.end()
             return
@@ -249,17 +287,20 @@ export default defineConfig({
 
           res.write(`data: ${JSON.stringify({ type: 'detected', driveLetter: ready.driveLetter, volumeName: ready.volumeName, name: ready.name })}\n\n`)
 
-          const scanDir = (dirPath, onFile) => {
+          const scanDir = (dirPath, onFile, depth = 0) => {
+            if (isAborted || depth > 8) return
             try {
               const entries = fs.readdirSync(dirPath, { withFileTypes: true })
               for (const entry of entries) {
+                if (isAborted) break
                 const fullPath = path.join(dirPath, entry.name)
                 if (entry.isDirectory()) {
-                  scanDir(fullPath, onFile)
+                  scanDir(fullPath, onFile, depth + 1)
                 } else if (entry.isFile()) {
                   try {
                     const stats = fs.statSync(fullPath)
-                    if (stats.size >= 8) {
+                    // Limit reading to files under 60MB to avoid OOM
+                    if (stats.size >= 8 && stats.size <= 60 * 1024 * 1024) {
                       const data = fs.readFileSync(fullPath)
                       onFile({
                         fileName: entry.name,
@@ -276,11 +317,14 @@ export default defineConfig({
 
           let sliceCount = 0
           scanDir(ready.rootPath, (file) => {
+            if (isAborted) return
             sliceCount++
             res.write(`data: ${JSON.stringify({ type: 'slice', file, index: sliceCount })}\n\n`)
           })
 
-          res.write(`data: ${JSON.stringify({ type: 'done', count: sliceCount, driveLetter: ready.driveLetter, volumeName: ready.volumeName })}\n\n`)
+          if (!isAborted) {
+            res.write(`data: ${JSON.stringify({ type: 'done', count: sliceCount, driveLetter: ready.driveLetter, volumeName: ready.volumeName })}\n\n`)
+          }
           res.end()
         })
       }

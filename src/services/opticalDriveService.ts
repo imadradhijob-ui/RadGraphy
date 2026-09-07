@@ -28,18 +28,37 @@ export class OpticalDriveService {
    * Scans and reads the connected optical CD/DVD drive directly.
    * If a disc is loaded, streams all patient DICOM studies.
    * If no disc is detected, returns detected = false.
+   * Supports cancellation via optional AbortSignal.
    */
   static async readDisc(
     onProgress?: (progress: number, message: string) => void,
-    onFirstBatch?: (study: DicomStudy) => void
+    onFirstBatch?: (study: DicomStudy) => void,
+    abortSignal?: AbortSignal
   ): Promise<OpticalDriveResult> {
+    if (abortSignal?.aborted) {
+      return { success: false, detected: false, message: 'Scan cancelled.' };
+    }
+
     if (onProgress) onProgress(5, '🔍 Searching for optical CD/DVD drives...');
 
     // 1. Electron Native Direct Drive Scanning
     if (window.electronAPI?.readOpticalDisc) {
+      const onAbort = () => {
+        try {
+          window.electronAPI?.cancelOpticalDisc?.();
+        } catch (_) {}
+      };
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
+
       try {
         if (onProgress) onProgress(15, 'Scanning CD/DVD disc drive...');
         const res = await window.electronAPI.readOpticalDisc();
+
+        if (abortSignal?.aborted || (res as any).cancelled) {
+          return { success: false, detected: false, message: 'Scan cancelled.' };
+        }
 
         if (!res.detected) {
           return {
@@ -54,6 +73,9 @@ export class OpticalDriveService {
 
         const allInstances: DicomInstance[] = [];
         for (let i = 0; i < files.length; i++) {
+          if (abortSignal?.aborted) {
+            return { success: false, detected: false, message: 'Scan cancelled.' };
+          }
           const f = files[i];
           try {
             const buf = typeof f.buffer === 'string' ? base64ToArrayBuffer(f.buffer) : f.buffer;
@@ -73,6 +95,10 @@ export class OpticalDriveService {
             const pct = Math.round(40 + ((i + 1) / Math.max(1, files.length)) * 55);
             onProgress(pct, `Processed ${allInstances.length} slices (${pct}%)...`);
           }
+        }
+
+        if (abortSignal?.aborted) {
+          return { success: false, detected: false, message: 'Scan cancelled.' };
         }
 
         if (allInstances.length > 0) {
@@ -99,14 +125,27 @@ export class OpticalDriveService {
           };
         }
       } catch (err: any) {
+        if (abortSignal?.aborted) {
+          return { success: false, detected: false, message: 'Scan cancelled.' };
+        }
         console.warn('Native readOpticalDisc error, trying stream API:', err);
+      } finally {
+        if (abortSignal) {
+          abortSignal.removeEventListener('abort', onAbort);
+        }
       }
     }
 
     // 2. High-Speed SSE Stream from Dev / System Server
     try {
+      if (abortSignal?.aborted) {
+        return { success: false, detected: false, message: 'Scan cancelled.' };
+      }
+
       if (onProgress) onProgress(10, 'Connecting to optical disc drive...');
-      const response = await fetch('/api/system/read-optical-disc/stream');
+      const response = await fetch('/api/system/read-optical-disc/stream', {
+        signal: abortSignal
+      });
 
       if (!response.ok || !response.body) {
         return {
@@ -126,6 +165,11 @@ export class OpticalDriveService {
       let notDetectedMsg = '';
 
       while (true) {
+        if (abortSignal?.aborted) {
+          try { await reader.cancel(); } catch (_) {}
+          return { success: false, detected: false, message: 'Scan cancelled.' };
+        }
+
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -134,6 +178,7 @@ export class OpticalDriveService {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
+          if (abortSignal?.aborted) break;
           const trimmed = line.trim();
           if (trimmed.startsWith('data: ')) {
             try {
@@ -190,7 +235,11 @@ export class OpticalDriveService {
           }
         }
 
-        if (isNotDetected) break;
+        if (isNotDetected || abortSignal?.aborted) break;
+      }
+
+      if (abortSignal?.aborted) {
+        return { success: false, detected: false, message: 'Scan cancelled.' };
       }
 
       if (isNotDetected) {
@@ -225,6 +274,13 @@ export class OpticalDriveService {
         };
       }
     } catch (err: any) {
+      if (err?.name === 'AbortError' || abortSignal?.aborted) {
+        return {
+          success: false,
+          detected: false,
+          message: 'Scan cancelled.'
+        };
+      }
       return {
         success: false,
         detected: false,

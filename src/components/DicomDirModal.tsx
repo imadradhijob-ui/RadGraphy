@@ -27,9 +27,25 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const hasAutoScannedRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleCancelAndClose = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setScanStatus('idle');
+    onClose();
+  };
 
   // Direct CD/DVD Scanning Routine
   const startOpticalDriveScan = async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     setScanStatus('scanning');
     setStatusMessage('Searching for connected optical CD/DVD drives...');
     setProgressPercent(10);
@@ -39,15 +55,19 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
     try {
       const result: OpticalDriveResult = await OpticalDriveService.readDisc(
         (percent, msg) => {
+          if (controller.signal.aborted) return;
           setScanStatus('reading');
           setProgressPercent(percent);
           setStatusMessage(msg);
         },
         (firstStudy) => {
-          // As soon as the first slice is ready, give responsive feedback
+          if (controller.signal.aborted) return;
           setStatusMessage(`Loading patient: ${firstStudy.patientName || 'Medical Study'}...`);
-        }
+        },
+        controller.signal
       );
+
+      if (controller.signal.aborted) return;
 
       if (result.detected && result.success && result.studies && result.studies.length > 0) {
         setScanStatus('success');
@@ -57,7 +77,9 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
 
         onStudiesLoaded(result.studies);
         setTimeout(() => {
-          onClose();
+          if (!controller.signal.aborted) {
+            onClose();
+          }
         }, 800);
       } else if (!result.detected) {
         setScanStatus('not_detected');
@@ -67,6 +89,7 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
         setErrorMessage(result.message || 'CD/DVD drive found, but no valid DICOM files were detected on the disc.');
       }
     } catch (err: any) {
+      if (controller.signal.aborted) return;
       setScanStatus('error');
       setErrorMessage(err?.message || 'An error occurred while accessing the optical drive.');
     }
@@ -77,9 +100,20 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
     if (isOpen) {
       startOpticalDriveScan();
     } else {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       hasAutoScannedRef.current = false;
       setScanStatus('idle');
     }
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -142,7 +176,7 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 select-none">
+    <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 select-none">
       <div className="bg-radiant-panel border border-radiant-border rounded-xl shadow-2xl w-full max-w-lg overflow-hidden text-xs text-slate-200 animate-in fade-in zoom-in-95 duration-200">
         {/* Modal Header */}
         <div className="h-12 bg-radiant-darkest border-b border-radiant-border px-4 flex items-center justify-between">
@@ -152,7 +186,7 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
           </div>
 
           <button
-            onClick={onClose}
+            onClick={handleCancelAndClose}
             className="p-1 hover:bg-radiant-hover text-slate-400 hover:text-white rounded transition-colors"
           >
             <X className="w-5 h-5" />
@@ -216,7 +250,7 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
                     {errorMessage || 'No CD/DVD disc was detected in the drive. Please make sure the patient DICOM disc is properly inserted into the optical drive and try again.'}
                   </p>
                   <p className="text-[11px] text-amber-400/80 font-medium">
-                    لم يتم العثور على قرص CD/DVD في محرك الأقراص. يرجى التأكد من وضع قرص المريض والمحاولة مجدداً.
+                    Please ensure the optical disc tray is closed and contains valid patient DICOM media.
                   </p>
                 </div>
               </div>
@@ -308,7 +342,7 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
             {detectedDrive?.driveLetter ? `Drive: ${detectedDrive.driveLetter} (${detectedDrive.volumeName || 'DISC'})` : 'Auto CD/DVD Drive Detection'}
           </span>
           <button
-            onClick={onClose}
+            onClick={handleCancelAndClose}
             className="px-4 py-1.5 bg-radiant-card hover:bg-radiant-hover text-slate-300 rounded font-semibold text-xs transition-colors"
           >
             Cancel

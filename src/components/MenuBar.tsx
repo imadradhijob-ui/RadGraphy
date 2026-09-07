@@ -95,7 +95,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           File
         </button>
         {openMenu === 'file' && (
-          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <button
               onClick={() => executeAndClose(onOpenFile)}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center justify-between"
@@ -161,7 +161,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           Edit
         </button>
         {openMenu === 'edit' && (
-          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <button
               onClick={() => executeAndClose(onClearMeasurements)}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 text-rose-300"
@@ -189,7 +189,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           View
         </button>
         {openMenu === 'view' && (
-          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <div className="px-3 py-1 text-[11px] font-bold text-slate-400">Viewport Grid Layout:</div>
             <div className="grid grid-cols-3 gap-1 px-2 py-1 bg-radiant-darkest rounded mx-2 mb-2">
               {(['1x1', '1x2', '2x2', '1x3', '3x3'] as GridLayout[]).map((g) => (
@@ -244,7 +244,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           Windowing
         </button>
         {openMenu === 'windowing' && (
-          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             {DEFAULT_WINDOW_PRESETS.map((preset) => (
               <button
                 key={preset.id}
@@ -273,7 +273,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           Measurements
         </button>
         {openMenu === 'measure' && (
-          <div className="absolute left-0 top-full mt-1 w-60 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-60 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <button
               onClick={() => executeAndClose(() => onSelectTool('distance'))}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"
@@ -329,7 +329,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           3D / MPR
         </button>
         {openMenu === 'mpr' && (
-          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <button
               onClick={() => executeAndClose(onToggleMpr)}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 font-bold text-cyan-300"
@@ -350,7 +350,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           Options
         </button>
         {openMenu === 'options' && (
-          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             {onOpenSettings && (
               <button
                 onClick={() => executeAndClose(onOpenSettings)}
@@ -380,7 +380,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           Help
         </button>
         {openMenu === 'help' && (
-          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200">
+          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <button
               onClick={() => executeAndClose(onOpenAbout)}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"

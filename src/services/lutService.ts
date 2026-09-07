@@ -236,22 +236,22 @@ export function getLutTable(lutType: ColorLutType = 'grayscale'): Uint8Array {
 /**
  * Identifies anatomical tissue type from calibrated Hounsfield Unit (HU)
  */
-export function classifyTissueFromHu(hu: number): { name: string; arabic: string; color: string } {
+export function classifyTissueFromHu(hu: number): { name: string; color: string } {
   if (hu <= -850) {
-    return { name: 'Air', arabic: 'هواء', color: 'text-sky-300' };
+    return { name: 'Air', color: 'text-sky-300' };
   } else if (hu <= -300) {
-    return { name: 'Lung', arabic: 'نسيج رئوي', color: 'text-cyan-400' };
+    return { name: 'Lung', color: 'text-cyan-400' };
   } else if (hu <= -25) {
-    return { name: 'Fat (Adipose)', arabic: 'دهون', color: 'text-amber-400' };
+    return { name: 'Fat (Adipose)', color: 'text-amber-400' };
   } else if (hu <= 15) {
-    return { name: 'Fluid / Water / CSF', arabic: 'سوائل / ماء', color: 'text-blue-400' };
+    return { name: 'Fluid / Water / CSF', color: 'text-blue-400' };
   } else if (hu <= 45) {
-    return { name: 'Soft Tissue / Brain', arabic: 'نسيج رخو / دماغ', color: 'text-emerald-400' };
+    return { name: 'Soft Tissue / Brain', color: 'text-emerald-400' };
   } else if (hu <= 85) {
-    return { name: 'Blood / Hematoma', arabic: 'دم / نزيف', color: 'text-rose-400' };
+    return { name: 'Blood / Hematoma', color: 'text-rose-400' };
   } else if (hu <= 300) {
-    return { name: 'Contrast / Trabecular Bone', arabic: 'صبغة / عظم إسفنجي', color: 'text-orange-400' };
+    return { name: 'Contrast / Trabecular Bone', color: 'text-orange-400' };
   } else {
-    return { name: 'Dense Cortical Bone', arabic: 'عظم قشري صلب', color: 'text-amber-200' };
+    return { name: 'Dense Cortical Bone', color: 'text-amber-200' };
   }
 }
