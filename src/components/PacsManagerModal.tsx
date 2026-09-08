@@ -33,12 +33,14 @@ interface PacsManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
   onStudyRetrieved: (study: DicomStudy) => void;
+  onStartRetrieve?: (result: PacsSearchResult) => void;
 }
 
 export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
   isOpen,
   onClose,
-  onStudyRetrieved
+  onStudyRetrieved,
+  onStartRetrieve
 }) => {
   const [activeTab, setActiveTab] = useState<'search' | 'servers'>('search');
   const [servers, setServers] = useState<PacsServerConfig[]>([]);
@@ -187,6 +189,12 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
   };
 
   const handleRetrieve = async (result: PacsSearchResult) => {
+    if (onStartRetrieve) {
+      onClose();
+      onStartRetrieve(result);
+      return;
+    }
+
     setDownloadingUid(result.studyInstanceUid);
     setDownloadProgress(10);
     setStatusMessage('Connecting to PACS & discovering all series...');
@@ -202,7 +210,8 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
         },
         (updatedStudy) => {
           onStudyRetrieved(updatedStudy);
-        }
+        },
+        false
       );
       onStudyRetrieved(study);
       onClose();

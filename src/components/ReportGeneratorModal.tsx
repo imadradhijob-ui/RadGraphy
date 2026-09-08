@@ -115,7 +115,7 @@ export const ReportGeneratorModal: React.FC<ReportGeneratorModalProps> = ({
             <div class="report-title">DIAGNOSTIC RADIOLOGY REPORT</div>
             <div style="font-size: 10.5px; text-align: right; color: #64748b; margin-top: 3px;">
               <div>Report Date: ${new Date().toLocaleDateString()}</div>
-              <div>RadGraph Medical PACS</div>
+              <div>Radiner Medical PACS</div>
             </div>
           </div>
         </div>

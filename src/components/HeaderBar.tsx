@@ -52,9 +52,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
       {/* Brand & App Title */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2 bg-gradient-to-r from-cyan-600 to-blue-700 px-2.5 py-1 rounded shadow-sm text-white font-bold text-sm tracking-wide">
-          <span>RadGraph Viewer</span>
-          <span className="text-[10px] font-mono bg-cyan-950/60 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-400/40">
-            v0.0.4
+          <img src="/icon.png" alt="Radiner" className="w-5 h-5 rounded object-contain" />
+          <span>Radiner</span>
+          <span className="text-[10.5px] font-mono bg-cyan-950/60 text-cyan-300 px-1.5 py-0.5 rounded border border-cyan-400/40">
+            Version 0.0.5
           </span>
         </div>
 
@@ -172,7 +173,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           {/* Exit / Close Application Button */}
           <button
             onClick={onExit}
-            title="Exit / Close RadGraph Viewer"
+            title="Exit / Close Radiner"
             className="flex items-center gap-1 px-2.5 py-1 bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white rounded border border-rose-700/60 transition-all font-semibold text-xs shadow-sm"
           >
             <X className="w-3.5 h-3.5" />

@@ -156,6 +156,27 @@ export class LocalDicomCache {
   }
 
   /**
+   * Deletes a specific study and all its slices from local cache
+   */
+  static async deleteStudy(studyInstanceUid: string): Promise<void> {
+    try {
+      const db = await openDatabase();
+      const tx = db.transaction([STORE_STUDIES, STORE_SLICES], 'readwrite');
+      tx.objectStore(STORE_STUDIES).delete(studyInstanceUid);
+      
+      const sliceStore = tx.objectStore(STORE_SLICES);
+      const index = sliceStore.index('studyUid');
+      const req = index.getAllKeys(studyInstanceUid);
+      req.onsuccess = () => {
+        const keys = req.result;
+        if (keys && keys.length > 0) {
+          keys.forEach(k => sliceStore.delete(k));
+        }
+      };
+    } catch (e) {}
+  }
+
+  /**
    * Clears old cache data to free storage
    */
   static async clearCache(): Promise<void> {

@@ -1,9 +1,9 @@
 {
-  "name": "radgraph",
+  "name": "radiner",
   "private": true,
-  "version": "0.0.4",
-  "description": "RadGraph Viewer - v0.0.4",
-  "author": "RadGraph Medical",
+  "version": "0.0.5",
+  "description": "Radiner Version 0.0.5",
+  "author": "Radiner Medical",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -16,9 +16,9 @@
     "dist": "npm run build && electron-builder --win nsis"
   },
   "build": {
-    "appId": "com.radgraph.medical.workstation",
-    "productName": "RadGraph Viewer",
-    "copyright": "Copyright © 2026 RadGraph Medical Platform",
+    "appId": "com.radiner.medical.workstation",
+    "productName": "Radiner",
+    "copyright": "Copyright © 2026 Radiner Medical Platform",
     "asar": true,
     "directories": {
       "output": "dist_installer",
@@ -38,10 +38,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "RadGraph Viewer",
+      "shortcutName": "Radiner",
+      "artifactName": "Radiner Setup 0.0.5.${ext}",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "uninstallDisplayName": "RadGraph Viewer"
+      "uninstallDisplayName": "Radiner"
     }
   },
   "dependencies": {

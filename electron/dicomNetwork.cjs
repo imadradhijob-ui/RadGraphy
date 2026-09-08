@@ -47,6 +47,11 @@ const STORAGE_SOP_CLASSES = [
   '1.2.840.10008.5.1.4.1.1.481.2',  // RT Dose Storage
   '1.2.840.10008.5.1.4.1.1.481.3',  // RT Structure Set
   '1.2.840.10008.5.1.4.1.1.104.1',  // Encapsulated PDF
+  '1.2.840.10008.5.1.4.1.1.88.11',  // Basic Text SR
+  '1.2.840.10008.5.1.4.1.1.88.22',  // Enhanced SR
+  '1.2.840.10008.5.1.4.1.1.88.33',  // Comprehensive SR
+  '1.2.840.10008.5.1.4.1.1.88.67',  // X-Ray Radiation Dose SR
+  '1.2.840.10008.5.1.4.1.1.88.59',  // Key Object Selection Document
 ];
 
 function padString(str, len) {
@@ -858,15 +863,20 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
     const socket = new net.Socket();
     socket.setNoDelay(true);
     const seriesList = [];
+    let isDone = false;
 
-    const timer = setTimeout(() => {
+    const finish = () => {
+      if (isDone) return;
+      isDone = true;
       try { socket.destroy(); } catch (e) {}
       resolve(seriesList);
-    }, 4500);
+    };
+
+    let timer = setTimeout(finish, 15000);
 
     socket.connect(port, host, () => {
       const pdu = buildAssociateRq(callingAe, calledAe, [
-        { abstractSyntax: SOP_STUDY_ROOT_FIND, transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] }
+        { id: 1, abstractSyntax: SOP_STUDY_ROOT_FIND, transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] }
       ]);
       socket.write(pdu);
     });
@@ -875,6 +885,9 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
     let currentFragments = [];
 
     socket.on('data', (chunk) => {
+      clearTimeout(timer);
+      timer = setTimeout(finish, 15000);
+
       clientBuffer = Buffer.concat([clientBuffer, chunk]);
       while (clientBuffer.length >= 6) {
         const pduType = clientBuffer[0];
@@ -902,7 +915,7 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
               if (status === 0x0000) {
                 clearTimeout(timer);
                 try { socket.write(buildReleaseRq()); } catch (e) {}
-                setTimeout(() => { socket.destroy(); resolve(seriesList); }, 50);
+                setTimeout(finish, 50);
                 return;
               }
             } else {
@@ -928,7 +941,8 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
       }
     });
 
-    socket.on('error', () => { clearTimeout(timer); resolve(seriesList); });
+    socket.on('error', finish);
+    socket.on('close', finish);
   });
 }
 
@@ -1277,7 +1291,7 @@ function searchDicomStudies(serverConfig, filters = {}) {
 }
 
 /**
- * Worker function to retrieve a single DICOM series over an independent high-speed TCP socket
+ * Worker function to retrieve DICOM instances over a robust TCP socket (Study or Series level)
  */
 function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, onSliceFile) {
   return new Promise((resolve) => {
@@ -1300,7 +1314,13 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
       resolve(received);
     };
 
-    let timer = setTimeout(cleanup, 5000);
+    // Robust 30-second activity timer (never cuts off prematurely)
+    let timer = setTimeout(cleanup, 30000);
+
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(cleanup, 30000);
+    };
 
     const presentationContexts = [
       { id: 1, abstractSyntax: '1.2.840.10008.5.1.4.1.2.2.2', transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] },
@@ -1332,6 +1352,7 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
     let cGetActiveFragments = [];
 
     socket.on('data', (chunk) => {
+      resetTimer();
       clientBuffer = Buffer.concat([clientBuffer, chunk]);
 
       while (clientBuffer.length >= 6) {
@@ -1342,6 +1363,7 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
         clientBuffer = clientBuffer.slice(6 + pduLen);
 
         if (pduType === PDU_A_ASSOCIATE_AC) {
+          console.log(`[C-GET Association Established] Level: ${seriesUid ? 'SERIES' : 'STUDY'}`);
           const cGetPdu = buildCGetRq(3, SOP_STUDY_ROOT_GET, studyInstanceUid, seriesUid, 1);
           socket.write(cGetPdu);
         } else if (pduType === PDU_P_DATA_TF) {
@@ -1366,10 +1388,12 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
                   sopInstance: cmdMap['(0000,1000)'] || ''
                 };
               }
-              if (status === 0x0000 || (cmdField === 0x8010 && (status === 0x0000 || status === 0xB000))) {
+              // C-GET-RSP is 0x8010. Final statuses are 0x0000 (Success), 0xB000 (Warning), or errors
+              if (cmdField === 0x8010 && status !== 0xFF00 && status !== 0xFF01) {
+                console.log(`[C-GET-RSP Complete] status: 0x${(status || 0).toString(16)}, total instances: ${received.length}`);
                 clearTimeout(timer);
                 try { socket.write(buildReleaseRq()); } catch (e) {}
-                setTimeout(cleanup, 10);
+                setTimeout(cleanup, 50);
                 return;
               }
             } else {
@@ -1388,9 +1412,8 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
                 if (typeof onSliceFile === 'function') {
                   try { onSliceFile(fileObj); } catch (e) {}
                 }
-                clearTimeout(timer);
-                timer = setTimeout(cleanup, 800);
 
+                // Send C-STORE-RSP confirmation
                 const rspPdu = buildCStoreRsp(pdvPcId, currentCGetCmd.msgId || 1, 0x0000, currentCGetCmd.sopClass, currentCGetCmd.sopInstance);
                 socket.write(rspPdu);
               }
@@ -1408,52 +1431,20 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
 }
 
 /**
- * Retrieves full real DICOM studies via Parallel Multi-Channel DICOM Acceleration (RadiAnt Architecture)
+ * Retrieves full real DICOM studies via RadiAnt Architecture (Study-Root C-GET with fallback)
  */
 async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
-  const host = serverConfig.host || '127.0.0.1';
-  const port = Number(serverConfig.port) || 104;
-  const calledAe = serverConfig.aeTitle || 'INFOMED';
-  const callingAe = serverConfig.callingAeTitle || 'RADIANT_VIEWER';
-
-  // 1. Discover all series under this study
+  // 1. Discover all series under this study (for metadata and logging)
   let seriesList = [];
   try {
     seriesList = await querySeriesInStudy(serverConfig, studyInstanceUid);
-    console.log(`[PACS Series Discovery] Found ${seriesList.length} series in study ${studyInstanceUid}`);
+    console.log(`[PACS Series Discovery] Found ${seriesList.length} series in study ${studyInstanceUid}:`);
+    seriesList.forEach((s, i) => {
+      console.log(`  -> Series #${s.seriesNumber || (i + 1)}: "${s.seriesDescription || 'Unnamed'}" (${s.modality}) [${s.instances || 0} instances]`);
+    });
   } catch (e) {
-    console.warn('[PACS Series Discovery] Failed to query series list:', e);
+    console.warn('[PACS Series Discovery] Query series note:', e);
   }
-
-  // Filter out dose, protocol, raw reconstruction, and non-image series
-  const imageSeries = seriesList.filter(s => {
-    const desc = (s.seriesDescription || '').toLowerCase();
-    const mod = (s.modality || '').toUpperCase();
-    if (mod === 'SR' || mod === 'PR' || mod === 'KO' || mod === 'DOC' || mod === 'OT') return false;
-    if (desc.includes('raw data') || desc.includes('raw_data') || desc === 'raw') return false;
-    if (desc.includes('patient protocol') || desc.includes('dose report') || desc.includes('dose info') || desc.includes('protocol')) return false;
-    return true;
-  });
-
-  // De-duplicate series by seriesUid
-  const uniqueMap = new Map();
-  const rawList = imageSeries.length > 0 ? imageSeries : seriesList;
-  for (const s of rawList) {
-    if (s.seriesUid && !uniqueMap.has(s.seriesUid)) {
-      uniqueMap.set(s.seriesUid, s);
-    }
-  }
-  const targetSeriesList = Array.from(uniqueMap.values());
-
-  // Prioritize primary volumetric series first (Axial > Coronal > Sagittal > Others)
-  targetSeriesList.sort((a, b) => {
-    const descA = (a.seriesDescription || '').toLowerCase();
-    const descB = (b.seriesDescription || '').toLowerCase();
-    const isAxialA = descA.includes('ax') ? 1 : 0;
-    const isAxialB = descB.includes('ax') ? 1 : 0;
-    if (isAxialA !== isAxialB) return isAxialB - isAxialA;
-    return (b.instances || 0) - (a.instances || 0);
-  });
 
   const allFiles = [];
   let sliceIndex = 0;
@@ -1467,31 +1458,29 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     }
   };
 
-  if (targetSeriesList.length > 0) {
-    // 2. High-Speed Multi-Channel Concurrent DICOM Pipeline (up to 8 Parallel Associations)
-    const MAX_CONCURRENT_CHANNELS = 8;
-    console.log(`[RadiAnt Turbo Pipeline] Launching ${Math.min(MAX_CONCURRENT_CHANNELS, targetSeriesList.length)} parallel DICOM associations for ${targetSeriesList.length} diagnostic series...`);
+  // 2. Primary Method: RadiAnt-Style High-Performance STUDY-Level C-GET Pipeline
+  console.log(`[RadiAnt Pipeline] Initiating Study-Level C-GET for study ${studyInstanceUid}...`);
+  const studyResult = await retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, '', handleWorkerSlice);
 
-    const queue = [...targetSeriesList];
-    const runWorkerPool = async () => {
-      const workers = [];
-      const numWorkers = Math.min(MAX_CONCURRENT_CHANNELS, targetSeriesList.length);
-      for (let i = 0; i < numWorkers; i++) {
-        workers.push((async () => {
-          while (queue.length > 0) {
-            const nextSer = queue.shift();
-            if (!nextSer) break;
-            console.log(`[Turbo Worker] Fetching Series: "${nextSer.seriesDescription || nextSer.seriesUid}"`);
-            await retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, nextSer.seriesUid, handleWorkerSlice);
-          }
-        })());
-      }
-      await Promise.all(workers);
+  if (studyResult && studyResult.length > 0) {
+    console.log(`[RadiAnt Pipeline] Successfully retrieved ${studyResult.length} slices across all series via Study-Level C-GET.`);
+    return {
+      success: true,
+      count: studyResult.length,
+      files: studyResult
     };
+  }
 
-    await runWorkerPool();
+  // 3. Fallback: Sequential Series-Level C-GET (for legacy PACS that reject Study-Level C-GET)
+  if (seriesList.length > 0) {
+    console.log(`[RadiAnt Pipeline] Falling back to Series-Level C-GET for ${seriesList.length} series...`);
+    for (const ser of seriesList) {
+      if (!ser.seriesUid) continue;
+      console.log(`[RadiAnt Pipeline] Fetching Series "${ser.seriesDescription || ser.seriesUid}"...`);
+      await retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, ser.seriesUid, handleWorkerSlice);
+    }
 
-    console.log(`[RadiAnt Turbo Pipeline] Finished! Total Slices Retrieved: ${allFiles.length}`);
+    console.log(`[RadiAnt Pipeline] Series-Level fallback complete. Total slices retrieved: ${allFiles.length}`);
     return {
       success: allFiles.length > 0,
       count: allFiles.length,
@@ -1499,19 +1488,19 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     };
   }
 
-  // Fallback: Single socket STUDY level retrieve
-  const singleResult = await retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, '', handleWorkerSlice);
   return {
-    success: singleResult.length > 0,
-    count: singleResult.length,
-    files: singleResult
+    success: false,
+    count: 0,
+    files: []
   };
 }
 
 module.exports = {
   testDicomEcho,
   searchDicomStudies,
+  querySeriesInStudy,
   retrieveDicomStudy,
+  retrieveSingleSeriesWorker,
   buildAssociateRq,
   buildAssociateAc,
   buildCEchoRq,

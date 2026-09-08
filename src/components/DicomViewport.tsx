@@ -660,6 +660,16 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     renderOverlay();
   }, [renderDicom, renderOverlay]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && drawingPoints.length > 0) {
+        setDrawingPoints([]);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [drawingPoints]);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     onActivate();
     e.preventDefault();

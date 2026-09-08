@@ -365,35 +365,52 @@ export class PacsService {
     result: PacsSearchResult,
     onProgress: (progress: number, message: string) => void,
     onFirstBatch?: (study: DicomStudy) => void,
-    onBatchUpdate?: (study: DicomStudy) => void
+    onBatchUpdate?: (study: DicomStudy) => void,
+    forceRefresh = false,
+    onSliceProgress?: (current: number, total?: number, message?: string) => void
   ): Promise<DicomStudy> {
-    // 0. RadiAnt-Style Instant Local Cache Check (0ms Instant Load)
-    try {
-      const isCached = await LocalDicomCache.hasStudy(result.studyInstanceUid);
-      if (isCached) {
-        const cachedSlices = await LocalDicomCache.getStudySlices(result.studyInstanceUid);
-        if (cachedSlices && cachedSlices.length > 0) {
-          const allInstances: DicomInstance[] = [];
-          for (const s of cachedSlices) {
-            if (isDicomBuffer(s.buffer)) {
-              allInstances.push(parseDicomBufferFast(s.buffer, s.fileName));
+    // 0. Instant Local Cache Check (unless forceRefresh is requested)
+    if (forceRefresh) {
+      console.log(`[PACS Client] Force fresh requested. Purging local cache for study ${result.studyInstanceUid}...`);
+      await LocalDicomCache.deleteStudy(result.studyInstanceUid);
+    } else {
+      try {
+        const isCached = await LocalDicomCache.hasStudy(result.studyInstanceUid);
+        if (isCached) {
+          const cachedSlices = await LocalDicomCache.getStudySlices(result.studyInstanceUid);
+          if (cachedSlices && cachedSlices.length > 0) {
+            const allInstances: DicomInstance[] = [];
+            for (const s of cachedSlices) {
+              if (isDicomBuffer(s.buffer)) {
+                allInstances.push(parseDicomBufferFast(s.buffer, s.fileName));
+              }
             }
-          }
-          if (allInstances.length > 0) {
-            const grouped = groupInstancesIntoStudies(allInstances, 'pacs', `Local Cache (${result.studyDescription || result.patientName})`);
-            if (grouped.length > 0) {
-              const totalInstancesInGroup = grouped[0].series.reduce((sum, s) => sum + s.instances.length, 0);
-              // Only use cache if it has all slices (> 1 slices or study actually has only 1 slice)
-              if (totalInstancesInGroup > 1 || (result.numberOfInstances || 0) <= 1) {
-                onProgress(100, `⚡ Loaded ${totalInstancesInGroup} slices instantly from local cache.`);
-                return grouped[0];
+            if (allInstances.length > 0) {
+              const grouped = groupInstancesIntoStudies(allInstances, 'pacs', `Local Cache (${result.studyDescription || result.patientName})`);
+              if (grouped.length > 0) {
+                const totalInstancesInGroup = grouped[0].series.reduce((sum, s) => sum + s.instances.length, 0);
+                // Only use cache if it is reasonably complete (> 10 slices or matches study instances)
+                const isComplete = (result.numberOfInstances && result.numberOfInstances > 1)
+                  ? totalInstancesInGroup >= result.numberOfInstances
+                  : totalInstancesInGroup > 10;
+
+                if (isComplete) {
+                  onProgress(100, `⚡ Loaded ${totalInstancesInGroup} slices instantly from local cache.`);
+                  if (onSliceProgress) {
+                    onSliceProgress(totalInstancesInGroup, totalInstancesInGroup, 'Loaded from cache');
+                  }
+                  return grouped[0];
+                } else {
+                  console.log(`[PACS Client] Cached study has only ${totalInstancesInGroup} slices. Re-downloading full study from PACS...`);
+                  await LocalDicomCache.deleteStudy(result.studyInstanceUid);
+                }
               }
             }
           }
         }
+      } catch (cacheErr) {
+        console.warn('Cache lookup skipped:', cacheErr);
       }
-    } catch (cacheErr) {
-      console.warn('Cache lookup skipped:', cacheErr);
     }
 
     const servers = this.getServers();
@@ -419,6 +436,10 @@ export class PacsService {
               // Cache slice in background
               LocalDicomCache.saveSlice(result.studyInstanceUid, f.fileName, rawBuf);
 
+              if (onSliceProgress) {
+                onSliceProgress(allInstances.length, result.numberOfInstances > 1 ? result.numberOfInstances : undefined, `Downloading slide ${allInstances.length}...`);
+              }
+
               if (!firstBatchTriggered && allInstances.length >= 1 && onFirstBatch) {
                 firstBatchTriggered = true;
                 const initialGrouped = groupInstancesIntoStudies(
@@ -429,7 +450,7 @@ export class PacsService {
                 if (initialGrouped.length > 0) {
                   onFirstBatch(initialGrouped[0]);
                 }
-              } else if (firstBatchTriggered && onBatchUpdate && (allInstances.length % 10 === 0)) {
+              } else if (firstBatchTriggered && onBatchUpdate && (allInstances.length % 5 === 0 || allInstances.length <= 20)) {
                 const updated = groupInstancesIntoStudies(
                   [...allInstances],
                   'pacs',
@@ -478,6 +499,9 @@ export class PacsService {
           );
           if (grouped.length > 0) {
             onProgress(100, `Loaded ${allInstances.length} slices successfully.`);
+            if (onSliceProgress) {
+              onSliceProgress(allInstances.length, allInstances.length, 'Download complete');
+            }
             return grouped[0];
           }
         }
@@ -524,6 +548,10 @@ export class PacsService {
 
                       // Asynchronously cache slice to local storage (0ms next time)
                       LocalDicomCache.saveSlice(result.studyInstanceUid, msg.file.fileName, rawBuf);
+
+                      if (onSliceProgress) {
+                        onSliceProgress(allInstances.length, result.numberOfInstances > 1 ? result.numberOfInstances : undefined, `Downloading slide ${allInstances.length}...`);
+                      }
 
                       // As soon as the first slice arrives (< 0.1s), display study immediately!
                       if (!firstBatchTriggered && allInstances.length >= 1 && onFirstBatch) {
@@ -576,6 +604,9 @@ export class PacsService {
             );
             if (grouped.length > 0) {
               onProgress(100, `Loaded ${allInstances.length} slices successfully.`);
+              if (onSliceProgress) {
+                onSliceProgress(allInstances.length, allInstances.length, 'Download complete');
+              }
               return grouped[0];
             }
           }

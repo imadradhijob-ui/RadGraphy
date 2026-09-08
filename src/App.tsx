@@ -26,9 +26,12 @@ import {
   Point2D,
   SyncMode,
   ToolType,
-  ViewportState
+  ViewportState,
+  PacsDownloadState,
+  PacsSearchResult
 } from './types/dicom';
 import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './services/dicomParser';
+import { PacsService } from './services/pacsClient';
 import { Loader2 } from 'lucide-react';
 
 export const App: React.FC = () => {
@@ -36,6 +39,7 @@ export const App: React.FC = () => {
   const [studies, setStudies] = useState<DicomStudy[]>([]);
   const [activeStudyUid, setActiveStudyUid] = useState<string | null>(null);
   const [activeSeriesUid, setActiveSeriesUid] = useState<string | null>(null);
+  const [pacsDownloadState, setPacsDownloadState] = useState<PacsDownloadState | null>(null);
 
   // Tool & layout states
   const [activeTool, setActiveTool] = useState<ToolType>('ww_wl');
@@ -268,6 +272,82 @@ export const App: React.FC = () => {
     }));
   };
 
+  const handleStartPacsRetrieve = async (result: PacsSearchResult) => {
+    setPacsDownloadState({
+      isDownloading: true,
+      studyUid: result.studyInstanceUid,
+      patientName: result.patientName,
+      downloadedSlices: 0,
+      totalSlices: result.numberOfInstances > 1 ? result.numberOfInstances : undefined,
+      statusMessage: `Connecting to PACS for ${result.patientName}...`
+    });
+
+    try {
+      const study = await PacsService.retrieveStudy(
+        result,
+        (progress, msg) => {
+          setPacsDownloadState(prev => prev ? { ...prev, statusMessage: msg } : null);
+        },
+        (initialStudy) => {
+          setStudies(prev => {
+            const exists = prev.some(s => s.studyInstanceUid === initialStudy.studyInstanceUid);
+            if (exists) {
+              return prev.map(s => s.studyInstanceUid === initialStudy.studyInstanceUid ? initialStudy : s);
+            }
+            return [initialStudy, ...prev];
+          });
+          handleSelectStudy(initialStudy);
+        },
+        (updatedStudy) => {
+          setStudies(prev => {
+            const exists = prev.some(s => s.studyInstanceUid === updatedStudy.studyInstanceUid);
+            if (exists) {
+              return prev.map(s => s.studyInstanceUid === updatedStudy.studyInstanceUid ? updatedStudy : s);
+            }
+            return [updatedStudy, ...prev];
+          });
+        },
+        true, // forceRefresh = true to ensure complete clean retrieval
+        (current, total) => {
+          setPacsDownloadState(prev => prev ? {
+            ...prev,
+            downloadedSlices: current,
+            totalSlices: total || prev.totalSlices
+          } : null);
+        }
+      );
+
+      setStudies(prev => {
+        const exists = prev.some(s => s.studyInstanceUid === study.studyInstanceUid);
+        if (exists) {
+          return prev.map(s => s.studyInstanceUid === study.studyInstanceUid ? study : s);
+        }
+        return [study, ...prev];
+      });
+      handleSelectStudy(study);
+
+      const totalRetrieved = study.series.reduce((sum, s) => sum + s.instances.length, 0);
+      setPacsDownloadState(prev => prev ? {
+        ...prev,
+        isDownloading: false,
+        isComplete: true,
+        downloadedSlices: totalRetrieved,
+        totalSlices: totalRetrieved
+      } : null);
+
+      setTimeout(() => {
+        setPacsDownloadState(prev => prev?.isComplete ? null : prev);
+      }, 5000);
+    } catch (err: any) {
+      console.error('PACS retrieve error:', err);
+      setPacsDownloadState(prev => prev ? {
+        ...prev,
+        isDownloading: false,
+        statusMessage: `Download failed: ${err.message || err}`
+      } : null);
+    }
+  };
+
   // Image Transformations
   const handleRotate = () => {
     updateActiveViewport({ rotation: (currentViewport.rotation + 90) % 360 });
@@ -415,7 +495,7 @@ export const App: React.FC = () => {
     if ((window as any).electronAPI?.closeWindow) {
       (window as any).electronAPI.closeWindow();
     } else {
-      if (confirm('Are you sure you want to exit RadGraph Viewer?')) {
+      if (confirm('Are you sure you want to exit Radiner?')) {
         window.close();
         window.location.href = 'about:blank';
       }
@@ -465,7 +545,15 @@ export const App: React.FC = () => {
       else if (e.key === '9') handleApplyWindowPreset(600, 1200); // MRI T2
       else if (e.key === '0') handleApplyWindowPreset(128, 256); // Full Dynamic Range
       else if (e.key.toLowerCase() === 'w') setActiveTool('ww_wl');
-      else if (e.key.toLowerCase() === 'z') setActiveTool('zoom');
+      else if ((e.ctrlKey && e.key.toLowerCase() === 'z') || e.key === 'Delete' || e.key === 'Backspace') {
+        if (currentViewport.measurements && currentViewport.measurements.length > 0) {
+          updateActiveViewport({
+            measurements: currentViewport.measurements.slice(0, -1)
+          });
+          showNotification('Last measurement removed (Undo).');
+        }
+      }
+      else if (e.key.toLowerCase() === 'z' && !e.ctrlKey) setActiveTool('zoom');
       else if (e.key.toLowerCase() === 'p') setActiveTool('pan');
       else if (e.key.toLowerCase() === 'l') setActiveTool('loupe');
       else if (e.key.toLowerCase() === 'b') handleBookmarkCurrentSlice();
@@ -601,6 +689,7 @@ export const App: React.FC = () => {
           onSelectStudy={handleSelectStudy}
           onSelectSeries={handleSelectSeries}
           onDragSeriesStart={handleDragSeriesStart}
+          pacsDownloadState={pacsDownloadState}
         />
 
         {/* Center Canvas Workspace */}
@@ -650,6 +739,7 @@ export const App: React.FC = () => {
       <PacsManagerModal
         isOpen={isPacsModalOpen}
         onClose={() => setIsPacsModalOpen(false)}
+        onStartRetrieve={handleStartPacsRetrieve}
         onStudyRetrieved={(study) => {
           setStudies(prev => {
             const exists = prev.some(s => s.studyInstanceUid === study.studyInstanceUid);

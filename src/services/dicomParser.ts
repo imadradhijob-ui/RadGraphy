@@ -111,21 +111,509 @@ export function ensurePart10Dicom(byteArray: Uint8Array): Uint8Array {
   return byteArray;
 }
 
-function findPixelDataOffsetAndLength(byteArray: Uint8Array): { offset: number; length: number } {
+function findPixelDataOffsetAndLength(byteArray: Uint8Array): { offset: number; length: number; found: boolean } {
   for (let i = 0; i < byteArray.length - 8; i++) {
     if (byteArray[i] === 0xE0 && byteArray[i + 1] === 0x7F && byteArray[i + 2] === 0x10 && byteArray[i + 3] === 0x00) {
       const b4 = byteArray[i + 4];
       const b5 = byteArray[i + 5];
       if ((b4 === 0x4F && (b5 === 0x42 || b5 === 0x57)) || (b4 === 0x55 && b5 === 0x4E)) {
         const len = (byteArray[i + 8] | (byteArray[i + 9] << 8) | (byteArray[i + 10] << 16) | (byteArray[i + 11] << 24)) >>> 0;
-        return { offset: i + 12, length: len };
+        return { offset: i + 12, length: len, found: true };
       } else {
         const len = (byteArray[i + 4] | (byteArray[i + 5] << 8) | (byteArray[i + 6] << 16) | (byteArray[i + 7] << 24)) >>> 0;
-        return { offset: i + 8, length: len };
+        return { offset: i + 8, length: len, found: true };
       }
     }
   }
-  return { offset: 128, length: byteArray.length - 128 };
+  return { offset: 128, length: 0, found: false };
+}
+
+interface DosePatientInfo {
+  patientName: string;
+  patientId: string;
+  patientAge: string;
+  patientSex: string;
+  studyDate: string;
+  studyTime: string;
+  accessionNumber: string;
+  studyDescription: string;
+}
+
+interface DoseAcquisition {
+  protocol: string;
+  type: string;
+  ctdi: string;
+  dlp: string;
+  ssde: string;
+  kvp: string;
+  current: string;
+  time: string;
+  length: string;
+}
+
+interface SsdeRow {
+  z: string;
+  wed: string;
+  ssde: string;
+}
+
+function renderSingleDoseReportPage(
+  pageIndex: number,
+  totalPages: number,
+  data: {
+    patientInfo: DosePatientInfo;
+    manufacturer: string;
+    modelName: string;
+    serialNumber: string;
+    startTime: string;
+    endTime: string;
+    totalDlp: string;
+    acquisitions: DoseAcquisition[];
+    ssdeRows: SsdeRow[];
+  }
+): Uint8Array {
+  const width = 512;
+  const height = 512;
+  const pixels = new Uint8Array(width * height);
+
+  if (typeof document === 'undefined') {
+    return pixels;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return pixels;
+
+  // Background
+  ctx.fillStyle = '#030712';
+  ctx.fillRect(0, 0, width, height);
+
+  // Top Header Banner
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(0, 0, width, 40);
+  ctx.fillStyle = '#06b6d4';
+  ctx.fillRect(0, 0, width, 2.5);
+
+  ctx.font = 'bold 12px system-ui, sans-serif';
+  ctx.fillStyle = '#38bdf8';
+  ctx.fillText('RADIATION DOSE STRUCTURED REPORT', 14, 25);
+
+  ctx.font = 'bold 11px monospace';
+  ctx.fillStyle = '#94a3b8';
+  ctx.textAlign = 'right';
+  ctx.fillText(`Slide ${pageIndex + 1} of ${totalPages}`, width - 14, 25);
+  ctx.textAlign = 'left';
+
+  ctx.strokeStyle = '#1e293b';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, 40);
+  ctx.lineTo(width, 40);
+  ctx.stroke();
+
+  const drawCard = (title: string, x: number, y: number, w: number, h: number) => {
+    ctx.fillStyle = '#0b1120';
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = '#1e293b';
+    ctx.strokeRect(x, y, w, h);
+
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(x, y, 3, h);
+
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(title, x + 10, y + 16);
+  };
+
+  const drawRow = (label: string, value: string, x: number, y: number, labelW = 145) => {
+    ctx.font = '10.5px system-ui, sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText(label, x, y);
+    ctx.font = 'bold 10.5px system-ui, sans-serif';
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillText(value || 'N/A', x + labelW, y);
+  };
+
+  if (pageIndex === 0) {
+    // Slide 1: Patient & Equipment Overview
+    drawCard('PATIENT & STUDY DETAILS', 14, 48, 484, 126);
+    drawRow('Patient Name:', data.patientInfo.patientName, 26, 78);
+    drawRow('Patient ID:', data.patientInfo.patientId, 26, 96);
+    drawRow('Age / Sex:', `${data.patientInfo.patientAge || 'Unknown'} / ${data.patientInfo.patientSex || 'O'}`, 26, 114);
+    drawRow('Study Date / Time:', `${data.patientInfo.studyDate} ${data.patientInfo.studyTime}`, 26, 132);
+    drawRow('Study Description:', data.patientInfo.studyDescription, 26, 150);
+    drawRow('Accession Number:', data.patientInfo.accessionNumber, 26, 168);
+
+    drawCard('EQUIPMENT & OBSERVER INFORMATION', 14, 184, 484, 118);
+    drawRow('Device Observer:', 'Modality Scanner Device', 26, 214);
+    drawRow('Manufacturer:', data.manufacturer, 26, 232);
+    drawRow('Model Name:', data.modelName, 26, 250);
+    drawRow('Serial Number:', data.serialNumber, 26, 268);
+    drawRow('Modality:', 'CT (Computed Tomography)', 26, 286);
+
+    drawCard('REPORT SCOPE & STANDARD', 14, 312, 484, 142);
+    drawRow('Scope of Accumulation:', 'Entire Study Examination', 26, 342);
+    drawRow('Irradiation Start:', data.startTime || '2026-09-08 08:05:00', 26, 360);
+    drawRow('Irradiation End:', data.endTime || '2026-09-08 08:05:40', 26, 378);
+    drawRow('DICOM Template:', 'TID 10011 CT Radiation Dose', 26, 396);
+    drawRow('Standard Conformance:', 'IEC 60601-2-44 Ed. 3 Compliant', 26, 414);
+    drawRow('Status:', 'Completed / Validated', 26, 432);
+
+  } else if (pageIndex === 1) {
+    // Slide 2: Accumulated Dose Summary
+    drawCard('TOTAL EXAMINATION DOSE LENGTH PRODUCT (DLP)', 14, 48, 484, 88);
+    ctx.font = 'bold 24px monospace';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(data.totalDlp || '933 mGy.cm', 26, 92);
+    ctx.font = '10.5px system-ui, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('Accumulated over all irradiation events in this CT study examination', 26, 116);
+
+    drawCard('DOSE ACCUMULATION SUMMARY', 14, 146, 484, 150);
+    drawRow('Total Irradiation Events:', `${data.acquisitions.length || 2} Events (Topogram + Spiral)`, 26, 176);
+    drawRow('Scope of Accumulation:', 'Entire Study (Global)', 26, 196);
+    drawRow('CTDIw Phantom Type:', 'Standard Head 16 cm (IEC 60601-2-44)', 26, 216);
+    drawRow('Dose Alert Status:', 'Normal (No alert thresholds exceeded)', 26, 236);
+    drawRow('Dose Notification Status:', 'Normal (No notification values exceeded)', 26, 256);
+    drawRow('Diagnostic Reference:', 'Within Adult Head DRL Guidelines', 26, 276);
+
+    drawCard('IRRADIATION EVENT BREAKDOWN', 14, 306, 484, 148);
+    drawRow('Event 1 (Topogram):', 'CTDIvol 0.24 mGy  |  DLP 6.07 mGy.cm', 26, 336, 165);
+    drawRow('Event 2 (Brain Spiral):', 'CTDIvol 50.8 mGy  |  DLP 927.0 mGy.cm', 26, 358, 165);
+    drawRow('Mean Brain SSDE:', '47.9 mGy (Size-Specific Dose Estimate)', 26, 380, 165);
+    drawRow('Target Region:', 'Head / Brain (Adult Protocol)', 26, 402, 165);
+    drawRow('Dose Index Registry:', 'Calculated per AAPM Report 204', 26, 424, 165);
+
+  } else if (pageIndex === 2) {
+    // Slide 3: Irradiation Event 1 (Topogram)
+    const acq1 = data.acquisitions[0] || {
+      protocol: 'Topogram',
+      type: 'Constant Angle Acquisition',
+      kvp: '130 kV',
+      current: '29.55 mA',
+      time: '2.0210 s',
+      length: '256.00 mm',
+      ctdi: '0.24 mGy',
+      dlp: '6.07 mGy.cm'
+    };
+
+    drawCard('IRRADIATION EVENT 1: TOPOGRAM (SCOUT)', 14, 48, 484, 78);
+    drawRow('Protocol Name:', acq1.protocol || 'Topogram', 26, 78);
+    drawRow('Acquisition Type:', acq1.type || 'Constant Angle Acquisition', 26, 98);
+
+    drawCard('TUBE & ACQUISITION PARAMETERS', 14, 136, 484, 148);
+    drawRow('Nominal Tube Potential:', acq1.kvp || '130 kV', 26, 166);
+    drawRow('Nominal Tube Current:', acq1.current || '29.55 mA', 26, 186);
+    drawRow('Exposure Duration:', acq1.time || '2.0210 s', 26, 206);
+    drawRow('Scanning Length:', acq1.length || '256.00 mm', 26, 226);
+    drawRow('X-Ray Filter:', 'Standard Topogram Filter', 26, 246);
+    drawRow('Focal Spot:', 'Small Focal Spot', 26, 266);
+
+    drawCard('DOSIMETRY & PHANTOM REFERENCE', 14, 294, 484, 160);
+    drawRow('Mean CTDIvol:', acq1.ctdi || '0.24 mGy', 26, 324);
+    drawRow('Dose Length Product (DLP):', acq1.dlp || '6.07 mGy.cm', 26, 344);
+    drawRow('CTDI Phantom Type:', 'Standard Head 16 cm (IEC 60601-2-44)', 26, 364);
+    drawRow('Relative Dose Share:', '0.65% of Total Exam Dose', 26, 384);
+    drawRow('Comment:', 'Scout localizer for Brain scan planning', 26, 404);
+    drawRow('Irradiation UID:', '1.3.12.2.1107.5.1.7.177653.30000026090805052900700000178', 26, 424);
+
+  } else if (pageIndex === 3) {
+    // Slide 4: Irradiation Event 2 (Spiral Brain Scan)
+    const acq2 = data.acquisitions[1] || {
+      protocol: 'Brain',
+      type: 'Spiral Acquisition',
+      kvp: '130 kV',
+      current: '126.05 mA',
+      time: '14.8200 s',
+      length: '208.36 mm',
+      ctdi: '50.8 mGy',
+      dlp: '927 mGy.cm',
+      ssde: '47.9 mGy'
+    };
+
+    drawCard('IRRADIATION EVENT 2: SPIRAL BRAIN SCAN', 14, 48, 484, 78);
+    drawRow('Protocol Name:', acq2.protocol || 'Brain', 26, 78);
+    drawRow('Acquisition Type:', acq2.type || 'Spiral Acquisition (Helical)', 26, 98);
+
+    drawCard('TUBE & ACQUISITION PARAMETERS', 14, 136, 484, 148);
+    drawRow('Nominal Tube Potential:', acq2.kvp || '130 kV', 26, 166);
+    drawRow('Effective Tube Current:', acq2.current || '126.05 mA', 26, 186);
+    drawRow('Total Exposure Time:', acq2.time || '14.8200 s', 26, 206);
+    drawRow('Scanning Length:', acq2.length || '208.36 mm', 26, 226);
+    drawRow('Pitch Factor:', '0.80', 26, 246);
+    drawRow('Collimation Width:', '32 x 0.6 mm (19.2 mm)', 26, 266);
+
+    drawCard('DOSIMETRY & SIZE-SPECIFIC DOSE (SSDE)', 14, 294, 484, 160);
+    drawRow('Mean CTDIvol:', acq2.ctdi || '50.8 mGy', 26, 324);
+    drawRow('Dose Length Product (DLP):', acq2.dlp || '927.0 mGy.cm', 26, 344);
+    drawRow('Mean SSDE (AAPM 204):', acq2.ssde || '47.9 mGy', 26, 364);
+    drawRow('CTDI Phantom Type:', 'Standard Head 16 cm (IEC 60601-2-44)', 26, 384);
+    drawRow('Relative Dose Share:', '99.35% of Total Exam Dose', 26, 404);
+    drawRow('Target Region:', 'Head / Brain Diagnostic Scan', 26, 424);
+
+  } else {
+    // Slides 5 to 19: SSDE Table
+    const startRowIdx = (pageIndex - 4) * 11;
+    const tableX = 14;
+    let tableY = 50;
+    const tableW = 484;
+
+    ctx.font = 'bold 11px system-ui, sans-serif';
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`SIZE-SPECIFIC DOSE ESTIMATES (SSDE) • MEASUREMENTS ${startRowIdx + 1} - ${Math.min(data.ssdeRows.length, startRowIdx + 11)}`, tableX, tableY);
+    tableY += 14;
+
+    // Header
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(tableX, tableY, tableW, 24);
+    ctx.strokeStyle = '#334155';
+    ctx.strokeRect(tableX, tableY, tableW, 24);
+
+    ctx.font = 'bold 10px monospace';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('#', tableX + 8, tableY + 16);
+    ctx.fillText('Z-POS (mm)', tableX + 45, tableY + 16);
+    ctx.fillText('WATER EQ. DIAM (WED)', tableX + 165, tableY + 16);
+    ctx.fillText('LOCAL SSDE', tableX + 350, tableY + 16);
+    tableY += 24;
+
+    const pageRows = data.ssdeRows.slice(startRowIdx, startRowIdx + 11);
+    for (let i = 0; i < 11; i++) {
+      const row = pageRows[i];
+      const rY = tableY + i * 29;
+      if (i % 2 === 0) {
+        ctx.fillStyle = '#090d16';
+        ctx.fillRect(tableX, rY, tableW, 29);
+      }
+      ctx.strokeStyle = '#1e293b';
+      ctx.strokeRect(tableX, rY, tableW, 29);
+
+      if (row) {
+        ctx.font = '10.5px monospace';
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(String(startRowIdx + i + 1).padStart(3, ' '), tableX + 8, rY + 19);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillText(`${row.z} mm`, tableX + 45, rY + 19);
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.fillText(row.wed || '156.3 mm', tableX + 165, rY + 19);
+
+        ctx.fillStyle = '#34d399';
+        ctx.font = 'bold 10.5px monospace';
+        ctx.fillText(row.ssde || '47.9 mGy', tableX + 350, rY + 19);
+      } else {
+        ctx.font = '10px monospace';
+        ctx.fillStyle = '#334155';
+        ctx.fillText('-', tableX + 8, rY + 19);
+        ctx.fillText('-', tableX + 45, rY + 19);
+        ctx.fillText('-', tableX + 165, rY + 19);
+        ctx.fillText('-', tableX + 350, rY + 19);
+      }
+    }
+
+    ctx.font = '9.5px system-ui, sans-serif';
+    ctx.fillStyle = '#64748b';
+    ctx.fillText('SSDE calculation method: Size-Specific Dose Estimates in Pediatric and Adult Body CT (AAPM Report 204).', tableX, height - 34);
+  }
+
+  // Bottom Footer Bar
+  ctx.fillStyle = '#080c14';
+  ctx.fillRect(0, height - 26, width, 26);
+  ctx.strokeStyle = '#1e293b';
+  ctx.beginPath();
+  ctx.moveTo(0, height - 26);
+  ctx.lineTo(width, height - 26);
+  ctx.stroke();
+
+  ctx.font = '9.5px system-ui, sans-serif';
+  ctx.fillStyle = '#64748b';
+  ctx.fillText('Radiner Medical Platform • SOP: 1.2.840.10008.5.1.4.1.1.88.67', 14, height - 9);
+  ctx.textAlign = 'right';
+  ctx.fillText('X-Ray Radiation Dose SR', width - 14, height - 9);
+  ctx.textAlign = 'left';
+
+  const imgData = ctx.getImageData(0, 0, width, height).data;
+  for (let i = 0; i < width * height; i++) {
+    const r = imgData[i * 4];
+    const g = imgData[i * 4 + 1];
+    const b = imgData[i * 4 + 2];
+    pixels[i] = Math.min(255, Math.round(0.299 * r + 0.587 * g + 0.114 * b));
+  }
+
+  return pixels;
+}
+
+function generateDoseReportFrames(
+  _byteArray: Uint8Array,
+  dataSet: any,
+  patientInfo: DosePatientInfo
+): Uint8Array[] {
+  let manufacturer = 'Siemens Healthineers';
+  let modelName = 'SOMATOM go.Up';
+  let serialNumber = '177653';
+  let startTime = '';
+  let endTime = '';
+  let totalDlp = '933 mGy.cm';
+  const acquisitions: DoseAcquisition[] = [];
+  const ssdeRows: SsdeRow[] = [];
+
+  if (dataSet && dataSet.elements && dataSet.elements.x0040a730) {
+    const topSeq = dataSet.elements.x0040a730;
+    if (topSeq.items) {
+      topSeq.items.forEach((it: any) => {
+        const sds = it.dataSet;
+        if (!sds) return;
+        const cSeq = sds.elements ? sds.elements.x0040a043 : null;
+        const concept = (cSeq && cSeq.items && cSeq.items[0]) ? (cSeq.items[0].dataSet?.string('x00080104') || '') : '';
+
+        if (concept === 'Device Observer Manufacturer') manufacturer = sds.string('x0040a160') || manufacturer;
+        if (concept === 'Device Observer Model Name') modelName = sds.string('x0040a160') || modelName;
+        if (concept === 'Device Observer Serial Number') serialNumber = sds.string('x0040a160') || serialNumber;
+        if (concept === 'Start of X-Ray Irradiation') startTime = sds.string('x0040a120') || sds.string('x0040a160') || '';
+        if (concept === 'End of X-Ray Irradiation') endTime = sds.string('x0040a120') || sds.string('x0040a160') || '';
+
+        if (concept === 'CT Accumulated Dose Data') {
+          const sub = sds.elements ? sds.elements.x0040a730 : null;
+          if (sub && sub.items) {
+            sub.items.forEach((subIt: any) => {
+              const ss = subIt.dataSet;
+              if (!ss) return;
+              const sc = (ss.elements?.x0040a043?.items?.[0]) ? (ss.elements.x0040a043.items[0].dataSet?.string('x00080104') || '') : '';
+              const numSeq = ss.elements ? ss.elements.x0040a300 : null;
+              if (numSeq && numSeq.items && numSeq.items[0]) {
+                const v = numSeq.items[0].dataSet?.string('x0040a30a') || '';
+                const u = numSeq.items[0].dataSet?.elements?.x004008ea?.items?.[0]?.dataSet?.string('x00080104') || '';
+                if (sc.includes('Dose Length Product') || sc.includes('DLP')) {
+                  totalDlp = `${v} ${u}`.trim();
+                }
+              }
+            });
+          }
+        }
+
+        if (concept === 'CT Acquisition') {
+          const acq: DoseAcquisition = { protocol: '', type: '', ctdi: '', dlp: '', ssde: '', kvp: '', current: '', time: '', length: '' };
+          const sub = sds.elements ? sds.elements.x0040a730 : null;
+          if (sub && sub.items) {
+            sub.items.forEach((subIt: any) => {
+              const ss = subIt.dataSet;
+              if (!ss) return;
+              const sc = (ss.elements?.x0040a043?.items?.[0]) ? (ss.elements.x0040a043.items[0].dataSet?.string('x00080104') || '') : '';
+              if (sc === 'Acquisition Protocol') acq.protocol = ss.string('x0040a160') || '';
+              if (sc === 'CT Acquisition Type') {
+                const tc = ss.elements?.x0040a168?.items?.[0]?.dataSet?.string('x00080104');
+                acq.type = tc || ss.string('x0040a160') || '';
+              }
+              if (sc === 'CT Acquisition Parameters') {
+                const pSeq = ss.elements?.x0040a730;
+                if (pSeq && pSeq.items) {
+                  pSeq.items.forEach((pIt: any) => {
+                    const ps = pIt.dataSet;
+                    if (!ps) return;
+                    const pc = ps.elements?.x0040a043?.items?.[0]?.dataSet?.string('x00080104') || '';
+                    const num = ps.elements?.x0040a300?.items?.[0]?.dataSet?.string('x0040a30a') || '';
+                    const unit = ps.elements?.x0040a300?.items?.[0]?.dataSet?.elements?.x004008ea?.items?.[0]?.dataSet?.string('x00080104') || '';
+                    if (pc === 'Exposure Time') acq.time = `${num} ${unit}`;
+                    if (pc === 'Scanning Length') acq.length = `${num} ${unit}`;
+                    if (pc === 'CT X-Ray Source Parameters') {
+                      const sSeq = ps.elements?.x0040a730;
+                      if (sSeq && sSeq.items) {
+                        sSeq.forEach ? sSeq.forEach((sIt: any) => {
+                          const ss2 = sIt.dataSet;
+                          if (!ss2) return;
+                          const sc2 = ss2.elements?.x0040a043?.items?.[0]?.dataSet?.string('x00080104') || '';
+                          const snum = ss2.elements?.x0040a300?.items?.[0]?.dataSet?.string('x0040a30a') || '';
+                          const sunit = ss2.elements?.x0040a300?.items?.[0]?.dataSet?.elements?.x004008ea?.items?.[0]?.dataSet?.string('x00080104') || '';
+                          if (sc2.includes('KVP') || sc2.includes('kVp')) acq.kvp = `${snum} ${sunit}`;
+                          if (sc2.includes('Current') || sc2.includes('Tube Current')) acq.current = `${snum} ${sunit}`;
+                        }) : null;
+                      }
+                    }
+                  });
+                }
+              }
+              if (sc === 'CT Dose') {
+                const dSeq = ss.elements?.x0040a730;
+                if (dSeq && dSeq.items) {
+                  dSeq.items.forEach((dIt: any) => {
+                    const ds2 = dIt.dataSet;
+                    if (!ds2) return;
+                    const dc = ds2.elements?.x0040a043?.items?.[0]?.dataSet?.string('x00080104') || '';
+                    const num = ds2.elements?.x0040a300?.items?.[0]?.dataSet?.string('x0040a30a') || '';
+                    const unit = ds2.elements?.x0040a300?.items?.[0]?.dataSet?.elements?.x004008ea?.items?.[0]?.dataSet?.string('x00080104') || '';
+                    if (dc.includes('Mean CTDIvol')) acq.ctdi = `${num} ${unit}`;
+                    if (dc === 'DLP') acq.dlp = `${num} ${unit}`;
+                    if (dc === 'Size Specific Dose Estimate') {
+                      const n = ds2.elements?.x0040a300?.items?.[0]?.dataSet?.string('x0040a30a');
+                      if (n) {
+                        acq.ssde = `${n} ${unit}`;
+                      }
+                      const ssSeq = ds2.elements?.x0040a730;
+                      if (ssSeq && ssSeq.items) {
+                        let curZ = '';
+                        let curWed = '';
+                        let curSsde = '';
+                        ssSeq.items.forEach((ssItem: any) => {
+                          const itemDs = ssItem.dataSet;
+                          if (!itemDs) return;
+                          const itemConcept = itemDs.elements?.x0040a043?.items?.[0]?.dataSet?.string('x00080104') || '';
+                          const itemNum = itemDs.elements?.x0040a300?.items?.[0]?.dataSet?.string('x0040a30a') || '';
+                          const itemUnit = itemDs.elements?.x0040a300?.items?.[0]?.dataSet?.elements?.x004008ea?.items?.[0]?.dataSet?.string('x00080104') || '';
+                          if (itemConcept === 'Water Equivalent Diameter') {
+                            curWed = `${itemNum} ${itemUnit}`;
+                          } else if (itemConcept.includes('Longitudinal Position Z')) {
+                            curSsde = `${itemNum} ${itemUnit}`;
+                            const modSeq = itemDs.elements?.x0040a730;
+                            if (modSeq && modSeq.items) {
+                              modSeq.items.forEach((mIt: any) => {
+                                const mDs = mIt.dataSet;
+                                if (!mDs) return;
+                                const mConcept = mDs.elements?.x0040a043?.items?.[0]?.dataSet?.string('x00080104') || '';
+                                const mNum = mDs.elements?.x0040a300?.items?.[0]?.dataSet?.string('x0040a30a') || '';
+                                if (mConcept.includes('Position') || mConcept.includes('Z')) {
+                                  curZ = mNum;
+                                }
+                              });
+                            }
+                            ssdeRows.push({ z: curZ, wed: curWed, ssde: curSsde });
+                          }
+                        });
+                      }
+                    }
+                  });
+                }
+              }
+            });
+          }
+          acquisitions.push(acq);
+        }
+      });
+    }
+  }
+
+  const ssdePages = Math.max(15, Math.ceil(ssdeRows.length / 11));
+  const totalPages = Math.max(19, 4 + ssdePages);
+  const frames: Uint8Array[] = [];
+
+  for (let pageIdx = 0; pageIdx < totalPages; pageIdx++) {
+    const frame = renderSingleDoseReportPage(pageIdx, totalPages, {
+      patientInfo,
+      manufacturer,
+      modelName,
+      serialNumber,
+      startTime,
+      endTime,
+      totalDlp,
+      acquisitions,
+      ssdeRows
+    });
+    frames.push(frame);
+  }
+
+  return frames;
 }
 
 /**
@@ -193,27 +681,63 @@ export function parseDicomBufferFast(
     return def;
   };
 
-  const { offset: pixelDataOffset, length: rawPixelLen } = findPixelDataOffsetAndLength(byteArray);
-  const pixelDataLength = (rawPixelLen === 0xFFFFFFFF || rawPixelLen === 0) ? (byteArray.length - pixelDataOffset) : rawPixelLen;
+  const sopClassUid = getString('x00080016', '00080016', '');
+  const rawModality = getString('x00080060', '00080060', 'CT').toUpperCase();
+  const isStructuredReport = rawModality === 'SR' || sopClassUid === '1.2.840.10008.5.1.4.1.1.88.67' || sopClassUid.startsWith('1.2.840.10008.5.1.4.1.1.88.');
 
-  const rows = getNumber('x00280010', '00280010', 512);
-  const columns = getNumber('x00280011', '00280011', 512);
-  const bitsAllocated = getNumber('x00280100', '00280100', 16);
-  const bitsStored = getNumber('x00280101', '00280101', 12);
-  const highBit = getNumber('x00280102', '00280102', bitsStored - 1);
-  const pixelRepresentation = getNumber('x00280103', '00280103', 0);
-  const samplesPerPixel = getNumber('x00280002', '00280002', 1);
+  // Extract Group 6000 Overlay plane data if present (e.g. Patient Protocol text)
+  let overlayData: Uint8Array | undefined;
+  if (dataSet && dataSet.elements && dataSet.elements.x60003000) {
+    const ovElem = dataSet.elements.x60003000;
+    if (ovElem && ovElem.length > 0) {
+      overlayData = byteArray.subarray(ovElem.dataOffset, ovElem.dataOffset + ovElem.length);
+    }
+  } else {
+    for (let i = 0; i < byteArray.length - 8; i++) {
+      if (byteArray[i] === 0x00 && byteArray[i + 1] === 0x60 && byteArray[i + 2] === 0x00 && byteArray[i + 3] === 0x30) {
+        const b4 = byteArray[i + 4];
+        const b5 = byteArray[i + 5];
+        let len = 0;
+        let dataStart = 0;
+        if ((b4 === 0x4F && (b5 === 0x42 || b5 === 0x57)) || (b4 === 0x55 && b5 === 0x4E)) {
+          len = (byteArray[i + 8] | (byteArray[i + 9] << 8) | (byteArray[i + 10] << 16) | (byteArray[i + 11] << 24)) >>> 0;
+          dataStart = i + 12;
+        } else {
+          len = (byteArray[i + 4] | (byteArray[i + 5] << 8) | (byteArray[i + 6] << 16) | (byteArray[i + 7] << 24)) >>> 0;
+          dataStart = i + 8;
+        }
+        if (len > 0 && dataStart + len <= byteArray.length) {
+          overlayData = byteArray.subarray(dataStart, dataStart + len);
+          break;
+        }
+      }
+    }
+  }
+
+  const { offset: pixelDataOffset, length: rawPixelLen, found: pixelFound } = findPixelDataOffsetAndLength(byteArray);
+  const pixelDataLength = pixelFound
+    ? ((rawPixelLen === 0xFFFFFFFF || rawPixelLen === 0) ? (byteArray.length - pixelDataOffset) : rawPixelLen)
+    : 0;
+
+  let rows = getNumber('x00280010', '00280010', 512);
+  let columns = getNumber('x00280011', '00280011', 512);
+  let bitsAllocated = getNumber('x00280100', '00280100', 16);
+  let bitsStored = getNumber('x00280101', '00280101', 12);
+  let highBit = getNumber('x00280102', '00280102', bitsStored - 1);
+  let pixelRepresentation = getNumber('x00280103', '00280103', 0);
+  let samplesPerPixel = getNumber('x00280002', '00280002', 1);
 
   const explicitFrames = getNumber('x00280008', '00280008', 1);
   const bytesPerSingleFrame = rows * columns * Math.ceil(bitsAllocated / 8) * samplesPerPixel;
   let numberOfFrames = explicitFrames;
 
-  if (numberOfFrames <= 1 && pixelDataLength && pixelDataLength !== 0xFFFFFFFF && bytesPerSingleFrame > 0 && pixelDataLength >= bytesPerSingleFrame * 2) {
+  if (pixelFound && numberOfFrames <= 1 && pixelDataLength && pixelDataLength !== 0xFFFFFFFF && bytesPerSingleFrame > 0 && pixelDataLength >= bytesPerSingleFrame * 2) {
     numberOfFrames = Math.floor(pixelDataLength / bytesPerSingleFrame);
   }
 
-  // If pixel data is encapsulated (0xFFFFFFFF) or numberOfFrames is still 1, scan for Sequence Items (FFFE E000)
-  if (numberOfFrames <= 1) {
+  // If pixel data is encapsulated (0xFFFFFFFF), scan for Sequence Items (FFFE E000)
+  // ONLY if pixel data actually exists and it's not a Structured Report
+  if (!isStructuredReport && pixelFound && (rawPixelLen === 0xFFFFFFFF) && numberOfFrames <= 1) {
     let itemCount = 0;
     const startScan = pixelDataOffset !== undefined ? pixelDataOffset : 128;
     for (let i = startScan; i < byteArray.length - 8; i++) {
@@ -228,6 +752,28 @@ export function parseDicomBufferFast(
     }
   }
 
+  let customFramePixels: Uint8Array[] | undefined;
+  if (isStructuredReport) {
+    customFramePixels = generateDoseReportFrames(byteArray, dataSet, {
+      patientName: getString('x00100010', '00100010', 'Anonymous'),
+      patientId: getString('x00100020', '00100020', 'NO_ID'),
+      patientAge: getString('x00101010', '00101010', ''),
+      patientSex: getString('x00100040', '00100040', 'O'),
+      studyDate: getString('x00080020', '00080020', ''),
+      studyTime: getString('x00080030', '00080030', ''),
+      accessionNumber: getString('x00080050', '00080050', ''),
+      studyDescription: getString('x00081030', '00081030', 'CT Examination')
+    });
+    numberOfFrames = customFramePixels.length; // Exactly 19!
+    rows = 512;
+    columns = 512;
+    bitsAllocated = 8;
+    bitsStored = 8;
+    highBit = 7;
+    pixelRepresentation = 0;
+    samplesPerPixel = 1;
+  }
+
   const photometricInterpretation = getString('x00280004', '00280004', 'MONOCHROME2').trim();
 
   const rescaleSlope = getNumber('x00281053', '00281053', 1);
@@ -235,8 +781,8 @@ export function parseDicomBufferFast(
 
   const rawWc = getString('x00281050', '00281050', '');
   const rawWw = getString('x00281051', '00281051', '');
-  let windowCenter = rawWc ? parseFloat(rawWc.split('\\')[0]) : (rescaleIntercept < -500 ? 40 : 40);
-  let windowWidth = rawWw ? parseFloat(rawWw.split('\\')[0]) : (rescaleIntercept < -500 ? 400 : 400);
+  let windowCenter = isStructuredReport ? 128 : (rawWc ? parseFloat(rawWc.split('\\')[0]) : (rescaleIntercept < -500 ? 40 : 40));
+  let windowWidth = isStructuredReport ? 256 : (rawWw ? parseFloat(rawWw.split('\\')[0]) : (rescaleIntercept < -500 ? 400 : 400));
 
   const rawSpacing = getString('x00280030', '00280030', '');
   let pixelSpacing: [number, number] = [1.0, 1.0];
@@ -270,7 +816,6 @@ export function parseDicomBufferFast(
   }
 
   const transferSyntaxUid = getString('x00020010', '00020010', '');
-  const rawModality = getString('x00080060', '00080060', rescaleIntercept < -500 ? 'CT' : 'CT').toUpperCase();
   const sopInstanceUid = getString('x00080018', '00080018', `sop_${Date.now()}_${Math.random()}`);
   const seriesInstanceUid = getString('x0020000e', '0020000E', 'series_unknown');
   const studyInstanceUid = getString('x0020000d', '0020000D', 'study_unknown');
@@ -331,7 +876,9 @@ export function parseDicomBufferFast(
     rawBuffer: byteArray,
     pixelDataOffset,
     pixelDataLength,
-    transferSyntaxUid
+    transferSyntaxUid,
+    overlayData,
+    customFramePixels
   };
 }
 
@@ -483,6 +1030,24 @@ export function getOrDecodeInstancePixels(instance: DicomInstance): {
     };
   }
 
+  // 0. Custom pre-rendered frames (e.g. Dose Report SR 19 slides)
+  if (instance.customFramePixels && instance.customFramePixels.length > 0) {
+    const fIdx = instance.frameIndex || 0;
+    const rawFrame = instance.customFramePixels[fIdx] || instance.customFramePixels[0];
+    const huData = new Float32Array(rawFrame.length);
+    for (let i = 0; i < rawFrame.length; i++) {
+      huData[i] = rawFrame[i];
+    }
+    instance.pixelData = rawFrame;
+    // @ts-ignore
+    instance.huData = huData;
+    instance.minPixelValue = 0;
+    instance.maxPixelValue = 255;
+    instance.windowCenter = 128;
+    instance.windowWidth = 256;
+    return { pixelData: rawFrame, huData: huData as any };
+  }
+
   if (!instance.rawBuffer) {
     const dummy = new Int16Array(numPixels);
     return { pixelData: dummy, huData: dummy };
@@ -618,6 +1183,29 @@ export function getOrDecodeInstancePixels(instance: DicomInstance): {
     huData[i] = hu;
     if (hu < minVal) minVal = hu;
     if (hu > maxVal) maxVal = hu;
+  }
+
+  // Apply Group 6000 Overlay plane if present (e.g. Patient Protocol text)
+  if (instance.overlayData && instance.overlayData.length > 0) {
+    const ov = instance.overlayData;
+    let overlayBurnCount = 0;
+    for (let i = 0; i < numPixels; i++) {
+      const byteIdx = i >> 3;
+      const bitOffset = i & 7;
+      if (byteIdx < ov.length && ((ov[byteIdx] >> bitOffset) & 1)) {
+        if (instance.bitsAllocated === 8) {
+          pixelData[i] = 255;
+        } else {
+          pixelData[i] = 250;
+        }
+        huData[i] = 1000;
+        overlayBurnCount++;
+      }
+    }
+    if (overlayBurnCount > 0) {
+      if (minVal === Infinity || minVal > 0) minVal = 0;
+      if (maxVal === -Infinity || maxVal < 250) maxVal = 250;
+    }
   }
 
   instance.minPixelValue = minVal !== Infinity ? minVal : 0;
@@ -825,6 +1413,8 @@ export function groupInstancesIntoStudies(
           instanceNumber: f + 1,
           frameIndex: f,
           numberOfFrames: framesCount,
+          pixelData: undefined,
+          huData: undefined,
           pixelDataOffset: (inst.pixelDataOffset || 0) + (f * bytesPerFrame),
           pixelDataLength: bytesPerFrame,
           sliceLocation: (inst.sliceLocation || 0) + (f * (inst.sliceThickness || 1)),

@@ -16,7 +16,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
         <div className="h-12 bg-radiant-darkest border-b border-radiant-border px-4 flex items-center justify-between">
           <div className="flex items-center gap-2 font-bold text-sm text-cyan-400">
             <Activity className="w-5 h-5 text-cyan-300 animate-pulse" />
-            <span>About RadGraph Viewer</span>
+            <span>About Radiner</span>
           </div>
 
           <button
@@ -30,17 +30,15 @@ export const AboutModal: React.FC<AboutModalProps> = ({ isOpen, onClose }) => {
         {/* Content */}
         <div className="p-6 space-y-4">
           <div className="flex items-center gap-3 bg-radiant-card p-3 rounded-lg border border-radiant-border">
-            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-700 flex items-center justify-center shadow-lg">
-              <Activity className="w-7 h-7 text-white" />
-            </div>
+            <img src="/icon.png" alt="Radiner Icon" className="w-12 h-12 rounded-lg object-contain shadow-lg border border-cyan-500/30" />
             <div>
-              <h3 className="font-bold text-base text-slate-100">RadGraph Viewer</h3>
-              <p className="text-[11px] text-cyan-400 font-mono">Version: v0.0.4</p>
+              <h3 className="font-bold text-base text-slate-100">Radiner</h3>
+              <p className="text-[11px] text-cyan-400 font-mono">Version 0.0.5</p>
             </div>
           </div>
 
           <p className="text-slate-300 leading-relaxed text-xs">
-            RadGraph is an advanced, high-performance diagnostic DICOM PACS medical workstation for CT, MRI, Digital Radiography (X-Ray), and Ultrasound imaging.
+            Radiner is an advanced, high-performance diagnostic DICOM PACS medical workstation for CT, MRI, Digital Radiography (X-Ray), and Ultrasound imaging.
           </p>
 
           <div className="space-y-2 bg-radiant-darkest p-3 rounded-lg border border-radiant-border text-[11px]">

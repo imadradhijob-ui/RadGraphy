@@ -46,6 +46,10 @@ export interface DicomInstance {
   pixelDataOffset?: number;
   pixelDataLength?: number;
   transferSyntaxUid?: string;
+  // DICOM Overlay Plane (Group 6000) for text/graphics overlays (e.g. Patient Protocol)
+  overlayData?: Uint8Array;
+  // Custom rendered frames for Structured Reports (e.g. Dose Report)
+  customFramePixels?: (Int16Array | Uint8Array)[];
 }
 
 export interface DicomSeries {
@@ -251,4 +255,14 @@ export interface PacsSearchResult {
   modalities: string;
   numberOfInstances: number;
   serverConfigId: string;
+}
+
+export interface PacsDownloadState {
+  isDownloading: boolean;
+  studyUid: string;
+  patientName: string;
+  downloadedSlices: number;
+  totalSlices?: number;
+  statusMessage?: string;
+  isComplete?: boolean;
 }

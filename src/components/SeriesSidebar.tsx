@@ -11,9 +11,10 @@ import {
   Server,
   Maximize2,
   FileSpreadsheet,
-  Film
+  Film,
+  CheckCircle2
 } from 'lucide-react';
-import { DicomInstance, DicomSeries, DicomStudy } from '../types/dicom';
+import { DicomInstance, DicomSeries, DicomStudy, PacsDownloadState } from '../types/dicom';
 import { getOrDecodeInstancePixels } from '../services/dicomParser';
 
 interface SeriesSidebarProps {
@@ -25,6 +26,7 @@ interface SeriesSidebarProps {
   onSelectStudy: (study: DicomStudy) => void;
   onSelectSeries: (series: DicomSeries) => void;
   onDragSeriesStart: (e: React.DragEvent, series: DicomSeries) => void;
+  pacsDownloadState?: PacsDownloadState | null;
 }
 
 // Live Rendered DICOM Thumbnail Component
@@ -116,7 +118,8 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
   activeSeries,
   onSelectStudy,
   onSelectSeries,
-  onDragSeriesStart
+  onDragSeriesStart,
+  pacsDownloadState
 }) => {
   const [isExtraWide, setIsExtraWide] = useState(false);
 
@@ -169,24 +172,24 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
     );
   }
 
-  const sidebarWidthClass = isExtraWide ? 'w-[420px]' : 'w-80 md:w-96';
+  const sidebarWidthClass = isExtraWide ? 'w-72' : 'w-56';
 
   return (
     <aside className={`${sidebarWidthClass} bg-radiant-darkest border-r border-radiant-border flex flex-col h-full select-none text-xs text-slate-200 transition-all duration-150 shrink-0 z-10`}>
       {/* Sidebar Top Header */}
-      <div className="h-11 px-3 border-b border-radiant-border flex items-center justify-between bg-radiant-panel shrink-0">
-        <div className="flex items-center gap-2 font-bold text-slate-200">
-          <Film className="w-4 h-4 text-cyan-400" />
-          <span className="text-sm font-semibold tracking-wide">Series Thumbnails</span>
-          <span className="px-2 py-0.5 bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 rounded-full text-[10.5px] font-mono font-bold">
+      <div className="h-9 px-2.5 border-b border-radiant-border flex items-center justify-between bg-radiant-panel shrink-0">
+        <div className="flex items-center gap-1.5 font-bold text-slate-200">
+          <Film className="w-3.5 h-3.5 text-cyan-400" />
+          <span className="text-xs font-semibold tracking-wide">Series</span>
+          <span className="px-1.5 py-0.2 bg-cyan-950/80 border border-cyan-500/40 text-cyan-300 rounded-full text-[10px] font-mono font-bold">
             {activeStudy ? activeStudy.series.length : 0}
           </span>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
           <button
             onClick={() => setIsExtraWide(!isExtraWide)}
-            title={isExtraWide ? 'Standard Sidebar Width' : 'Expand Sidebar Width'}
+            title={isExtraWide ? 'Compact Sidebar Width' : 'Expand Sidebar Width'}
             className="p-1 hover:bg-radiant-hover text-slate-400 hover:text-slate-200 rounded transition-colors text-[10px]"
           >
             <Maximize2 className="w-3.5 h-3.5" />
@@ -196,28 +199,25 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
             title="Collapse Sidebar"
             className="p-1 hover:bg-radiant-hover text-slate-400 hover:text-white rounded transition-colors"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
       {/* Studies Selector Dropdown if multiple studies loaded */}
       {studies.length > 1 && (
-        <div className="p-2 border-b border-radiant-border bg-radiant-panel/60 shrink-0">
-          <label className="text-[11px] text-slate-400 font-semibold mb-1 block">
-            Loaded Patient Studies ({studies.length}):
-          </label>
+        <div className="p-1.5 border-b border-radiant-border bg-radiant-panel/60 shrink-0">
           <select
             value={activeStudy?.studyInstanceUid || ''}
             onChange={(e) => {
               const selected = studies.find(s => s.studyInstanceUid === e.target.value);
               if (selected) onSelectStudy(selected);
             }}
-            className="w-full bg-radiant-card border border-radiant-border text-slate-200 text-xs rounded p-1.5 outline-none focus:border-cyan-500 cursor-pointer"
+            className="w-full bg-radiant-card border border-radiant-border text-slate-200 text-[11px] rounded p-1 outline-none focus:border-cyan-500 cursor-pointer truncate"
           >
             {studies.map((s) => (
               <option key={s.studyInstanceUid} value={s.studyInstanceUid}>
-                {s.patientName.replace(/\^/g, ' ')} - {s.studyDescription || 'Study'} ({s.modalitiesInStudy.join(',')})
+                {s.patientName.replace(/\^/g, ' ')} ({s.modalitiesInStudy.join(',')})
               </option>
             ))}
           </select>
@@ -226,39 +226,40 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
 
       {/* Active Patient Card */}
       {activeStudy ? (
-        <div className="p-3 bg-gradient-to-b from-radiant-card/90 to-radiant-panel/60 border-b border-radiant-border shrink-0">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-1.5 font-bold text-cyan-300 text-sm truncate">
-              <User className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+        <div className="p-2 bg-gradient-to-b from-radiant-card/90 to-radiant-panel/60 border-b border-radiant-border shrink-0">
+          <div className="flex items-center justify-between mb-1">
+            <div className="flex items-center gap-1 font-bold text-cyan-300 text-xs truncate">
+              <User className="w-3.5 h-3.5 text-cyan-400 flex-shrink-0" />
               <span className="truncate">{activeStudy.patientName.replace(/\^/g, ' ')}</span>
             </div>
-            <div className="flex items-center gap-1 text-[10px] text-slate-400 bg-black/40 px-1.5 py-0.5 rounded border border-slate-800 flex-shrink-0">
+            <div className="flex items-center gap-1 text-[9.5px] text-slate-400 bg-black/40 px-1 py-0.2 rounded border border-slate-800 flex-shrink-0">
               {getSourceIcon(activeStudy.source)}
               <span className="font-mono">{activeStudy.source.toUpperCase()}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-x-2 gap-y-1 text-[11px] text-slate-400">
-            <div>ID: <span className="font-mono text-slate-200 font-medium">{activeStudy.patientId}</span></div>
-            <div>Sex/Age: <span className="text-slate-200">{activeStudy.patientSex || 'O'} {activeStudy.patientAge ? `(${activeStudy.patientAge})` : ''}</span></div>
-            <div className="col-span-2 text-amber-300/90 font-medium truncate">{activeStudy.studyDescription || 'Diagnostic Examination'}</div>
-            <div className="col-span-2 flex items-center justify-between text-[10px] text-slate-500 pt-0.5 border-t border-slate-800/80">
+          <div className="text-[10px] text-slate-400 space-y-0.5">
+            <div className="flex items-center justify-between">
+              <span>ID: <span className="font-mono text-slate-200 font-medium">{activeStudy.patientId}</span></span>
+              <span>{activeStudy.patientSex || 'O'} {activeStudy.patientAge ? `(${activeStudy.patientAge})` : ''}</span>
+            </div>
+            <div className="text-amber-300/90 font-medium truncate">{activeStudy.studyDescription || 'Diagnostic Exam'}</div>
+            <div className="flex items-center justify-between text-[9.5px] text-slate-500 pt-0.5 border-t border-slate-800/80">
               <span className="flex items-center gap-1">
-                <Calendar className="w-3 h-3 text-slate-400" />
+                <Calendar className="w-2.5 h-2.5 text-slate-400" />
                 {activeStudy.studyDate || 'N/A'}
               </span>
-              <span className="text-cyan-400 font-medium">{activeStudy.numberOfInstances} Total Slices</span>
+              <span className="text-cyan-400 font-medium">{activeStudy.numberOfInstances} Slices</span>
             </div>
           </div>
         </div>
       ) : null}
 
       {/* Series Thumbnail Gallery List */}
-      <div className="flex-1 overflow-y-auto p-2.5 space-y-2.5">
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-1.5">
         {activeStudy && activeStudy.series.length > 0 ? (
           activeStudy.series.map((ser) => {
             const isSelected = activeSeries?.seriesInstanceUid === ser.seriesInstanceUid;
-            // Pick middle slice for representative thumbnail preview
             const repInstance = ser.instances[Math.floor(ser.instances.length / 2)] || ser.instances[0];
 
             return (
@@ -267,57 +268,49 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
                 draggable
                 onDragStart={(e) => onDragSeriesStart(e, ser)}
                 onClick={() => onSelectSeries(ser)}
-                className={`p-2.5 rounded-xl border transition-all cursor-pointer group select-none shadow-sm ${
+                className={`p-1.5 rounded-lg border transition-all cursor-pointer group select-none shadow-sm ${
                   isSelected
-                    ? 'bg-gradient-to-r from-cyan-950/70 to-radiant-panel border-cyan-500 ring-1 ring-cyan-500/80 shadow-[0_0_12px_rgba(0,180,216,0.2)]'
+                    ? 'bg-gradient-to-r from-cyan-950/70 to-radiant-panel border-cyan-500 ring-1 ring-cyan-500/80 shadow-[0_0_10px_rgba(0,180,216,0.2)]'
                     : 'bg-radiant-panel/80 border-radiant-border hover:bg-radiant-card hover:border-slate-500'
                 }`}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   {/* Real Rendered DICOM Preview Thumbnail */}
-                  <div className="w-20 h-20 sm:w-24 sm:h-24 bg-black rounded-lg border border-slate-700/80 relative overflow-hidden flex-shrink-0 shadow-inner group-hover:border-cyan-500/70 transition-colors">
+                  <div className="w-16 h-16 bg-black rounded border border-slate-700/80 relative overflow-hidden flex-shrink-0 shadow-inner group-hover:border-cyan-500/70 transition-colors">
                     <SeriesThumbnailCanvas instance={repInstance} />
 
                     {/* Top Modality Badge */}
-                    <div className="absolute top-1 left-1 pointer-events-none">
-                      <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold border backdrop-blur-sm shadow ${getModalityBadgeColor(ser.modality)}`}>
+                    <div className="absolute top-0.5 left-0.5 pointer-events-none">
+                      <span className={`px-1 py-0 rounded text-[8.5px] font-bold border backdrop-blur-sm shadow ${getModalityBadgeColor(ser.modality)}`}>
                         {ser.modality}
                       </span>
                     </div>
 
                     {/* Bottom Series # & Count Badge */}
-                    <div className="absolute bottom-1 right-1 pointer-events-none bg-black/80 px-1 py-0.2 rounded text-[9px] font-mono text-cyan-300 border border-slate-800">
+                    <div className="absolute bottom-0.5 right-0.5 pointer-events-none bg-black/85 px-1 py-0 rounded text-[8.5px] font-mono text-cyan-300 border border-slate-800">
                       #{ser.seriesNumber} • {ser.numberOfInstances}
                     </div>
                   </div>
 
                   {/* Series Metadata & Parameters */}
-                  <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
+                  <div className="flex-1 min-w-0 flex flex-col justify-between py-0.2">
                     <div>
-                      <div className="flex items-center justify-between gap-1 mb-1">
-                        <h4 className={`font-bold text-xs truncate transition-colors ${
-                          isSelected ? 'text-cyan-300' : 'text-slate-100 group-hover:text-cyan-300'
-                        }`}>
-                          {ser.seriesDescription || `Series ${ser.seriesNumber}`}
-                        </h4>
-                      </div>
+                      <h4 className={`font-bold text-[11px] truncate transition-colors leading-tight ${
+                        isSelected ? 'text-cyan-300' : 'text-slate-100 group-hover:text-cyan-300'
+                      }`}>
+                        {ser.seriesDescription || `Series ${ser.seriesNumber}`}
+                      </h4>
 
-                      <p className="text-[11px] text-slate-400 truncate mb-1">
-                        {ser.protocolName || ser.bodyPartExamined || `${ser.modality} Examination`}
+                      <p className="text-[10px] text-slate-400 truncate mt-0.5">
+                        {ser.protocolName || ser.bodyPartExamined || `${ser.modality} Scan`}
                       </p>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[10.5px] text-slate-400 font-mono pt-1 border-t border-slate-800/80">
-                      <div>
-                        Thk: <span className="text-slate-200">{repInstance?.sliceThickness ? `${repInstance.sliceThickness.toFixed(1)}mm` : '-'}</span>
-                      </div>
-                      <div className="text-right">
-                        Matrix: <span className="text-slate-200">{repInstance ? `${repInstance.columns}x${repInstance.rows}` : '-'}</span>
-                      </div>
-                      <div className="col-span-2 flex items-center justify-between text-[10px] text-cyan-400/90 pt-0.5">
-                        <span>{ser.numberOfInstances} images</span>
-                        <span className="text-slate-500 text-[9px] uppercase tracking-wider group-hover:text-slate-300">Drag to Viewport</span>
-                      </div>
+                    <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/80 mt-1">
+                      <span className="text-cyan-300 font-mono font-medium">{ser.numberOfInstances} imgs</span>
+                      <span className="text-slate-400 font-mono text-[9px]">
+                        {repInstance?.sliceThickness ? `${repInstance.sliceThickness.toFixed(1)}mm` : ''}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -325,21 +318,78 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
             );
           })
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-500">
-            <Layers className="w-10 h-10 text-slate-600 mb-3 animate-pulse" />
-            <p className="text-xs font-semibold text-slate-400">No series loaded</p>
-            <p className="text-[11px] text-slate-600 mt-1">Open local files, folder or query PACS</p>
+          <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-500">
+            <Layers className="w-8 h-8 text-slate-600 mb-2 animate-pulse" />
+            <p className="text-xs font-semibold text-slate-400">No series</p>
           </div>
         )}
       </div>
 
+      {/* Live PACS Download Counter & Progress Panel */}
+      {pacsDownloadState && (pacsDownloadState.isDownloading || pacsDownloadState.isComplete) && (
+        <div className="p-2 bg-gradient-to-b from-cyan-950/70 to-slate-950/90 border-t border-cyan-800/60 flex flex-col gap-1.5 shrink-0 shadow-lg backdrop-blur-sm">
+          <div className="flex items-center justify-between text-[10.5px]">
+            <span className="flex items-center gap-1 text-cyan-300 font-semibold truncate">
+              {pacsDownloadState.isDownloading ? (
+                <>
+                  <span className="relative flex h-1.5 w-1.5 shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-cyan-500"></span>
+                  </span>
+                  <span className="truncate">Downloading...</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                  <span className="text-emerald-300 truncate">Complete</span>
+                </>
+              )}
+            </span>
+            <span className="text-cyan-200 font-mono text-[10px] font-bold shrink-0 ml-1">
+              {pacsDownloadState.downloadedSlices} {pacsDownloadState.totalSlices ? `/ ${pacsDownloadState.totalSlices}` : ''}
+            </span>
+          </div>
+
+          {/* Animated Progress Bar */}
+          <div className="w-full bg-slate-800/90 rounded-full h-1.5 overflow-hidden p-0.2 border border-slate-700/50">
+            <div
+              className={`h-full rounded-full transition-all duration-300 ${
+                pacsDownloadState.isComplete
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_8px_rgba(16,185,129,0.7)]'
+                  : 'bg-gradient-to-r from-cyan-500 to-blue-500 shadow-[0_0_8px_rgba(6,182,212,0.7)] animate-pulse'
+              }`}
+              style={{
+                width: `${
+                  pacsDownloadState.totalSlices
+                    ? Math.min(100, Math.round((pacsDownloadState.downloadedSlices / pacsDownloadState.totalSlices) * 100))
+                    : pacsDownloadState.isComplete
+                    ? 100
+                    : Math.min(95, Math.max(10, Math.round(pacsDownloadState.downloadedSlices / 15)))
+                }%`
+              }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-[9.5px] text-slate-400">
+            <span className="font-mono text-cyan-200 truncate">
+              {pacsDownloadState.downloadedSlices} slides {pacsDownloadState.totalSlices ? `of ${pacsDownloadState.totalSlices}` : ''}
+            </span>
+            {pacsDownloadState.totalSlices && (
+              <span className="text-cyan-400 font-mono font-bold">
+                {Math.round((pacsDownloadState.downloadedSlices / pacsDownloadState.totalSlices) * 100)}%
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Bottom Status Footer */}
-      <div className="p-2.5 border-t border-radiant-border bg-radiant-panel text-[11px] text-slate-400 flex items-center justify-between shrink-0">
-        <span className="flex items-center gap-1.5">
-          <FileSpreadsheet className="w-3.5 h-3.5 text-cyan-400" />
-          <span>Total Studies: <strong className="text-slate-200">{studies.length}</strong></span>
+      <div className="p-2 border-t border-radiant-border bg-radiant-panel text-[10px] text-slate-400 flex items-center justify-between shrink-0">
+        <span className="flex items-center gap-1">
+          <FileSpreadsheet className="w-3 h-3 text-cyan-400" />
+          <span>Studies: <strong className="text-slate-200">{studies.length}</strong></span>
         </span>
-        <span className="text-cyan-400 font-mono text-[10px]">RadGraph 60 FPS</span>
+        <span className="text-cyan-400 font-mono text-[9.5px]">Radiner</span>
       </div>
     </aside>
   );
