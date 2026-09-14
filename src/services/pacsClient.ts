@@ -38,7 +38,7 @@ const DEFAULT_PACS_SERVERS: PacsServerConfig[] = [
     id: 'pacs_alshaab',
     name: 'Alshaab PACS',
     aeTitle: 'INFOMED',
-    callingAeTitle: 'RADIANT_VIEWER',
+    callingAeTitle: 'RADNODE_VIEWER',
     host: '170.16.0.2',
     port: 2025,
     cStorePort: 11112,
@@ -50,7 +50,7 @@ const DEFAULT_PACS_SERVERS: PacsServerConfig[] = [
     id: 'pacs_orthanc_cloud',
     name: 'Secondary Research PACS (Orthanc)',
     aeTitle: 'ORTHANC_PACS',
-    callingAeTitle: 'RADIANT_VIEWER',
+    callingAeTitle: 'RADNODE_VIEWER',
     host: '192.168.1.100',
     port: 4242,
     cStorePort: 11112,
@@ -62,7 +62,7 @@ const DEFAULT_PACS_SERVERS: PacsServerConfig[] = [
     id: 'pacs_dcm4chee',
     name: 'Clinical Archive PACS (dcm4chee)',
     aeTitle: 'DCM4CHEE',
-    callingAeTitle: 'RADIANT_VIEWER',
+    callingAeTitle: 'RADNODE_VIEWER',
     host: '10.0.0.50',
     port: 11112,
     cStorePort: 11112,
@@ -73,29 +73,69 @@ const DEFAULT_PACS_SERVERS: PacsServerConfig[] = [
 ];
 
 export class PacsService {
-  private static STORAGE_KEY = 'radiant_pacs_servers_v6';
+  private static STORAGE_KEY = 'radiner_pacs_servers_v1';
+  private static LEGACY_STORAGE_KEYS = ['radiant_pacs_servers_v6', 'radiant_pacs_servers_v5'];
 
   static getServers(): PacsServerConfig[] {
     try {
-      const stored = localStorage.getItem(this.STORAGE_KEY);
-      if (stored) {
-        const parsed: PacsServerConfig[] = JSON.parse(stored);
-        // Always ensure the Alshaab PACS server is present
-        const hasAlshaab = parsed.some(s => s.id === 'pacs_alshaab');
-        if (!hasAlshaab) {
-          return [DEFAULT_PACS_SERVERS[0], ...parsed];
+      let stored = localStorage.getItem(this.STORAGE_KEY);
+      if (!stored) {
+        for (const legacyKey of this.LEGACY_STORAGE_KEYS) {
+          const legacy = localStorage.getItem(legacyKey);
+          if (legacy) {
+            stored = legacy;
+            break;
+          }
         }
-        return parsed;
       }
-    } catch {
-      // ignore
+
+      if (stored) {
+        let parsed: PacsServerConfig[] = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          let needsResave = false;
+          parsed = parsed.map(s => {
+            // Update legacy callingAeTitle to RADNODE_VIEWER
+            const calling = (s.callingAeTitle || '').trim();
+            if (!calling || calling === 'RADIANT_VIEWER' || calling === 'RADINER_VIEWER') {
+              needsResave = true;
+              return { ...s, callingAeTitle: 'RADNODE_VIEWER', port: Number(s.port) || 104 };
+            }
+            return { ...s, port: Number(s.port) || 104 };
+          });
+
+          // Always ensure the Alshaab PACS server is present
+          const hasAlshaab = parsed.some(s => s.id === 'pacs_alshaab');
+          if (!hasAlshaab) {
+            parsed = [DEFAULT_PACS_SERVERS[0], ...parsed];
+            needsResave = true;
+          }
+
+          if (needsResave || !localStorage.getItem(this.STORAGE_KEY)) {
+            this.saveServers(parsed);
+          }
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load PACS servers:', e);
     }
+    this.saveServers(DEFAULT_PACS_SERVERS);
     return DEFAULT_PACS_SERVERS;
   }
 
   static saveServers(servers: PacsServerConfig[]): void {
     try {
-      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(servers));
+      const sanitized = servers.map(s => ({
+        ...s,
+        callingAeTitle: (s.callingAeTitle || 'RADNODE_VIEWER').trim(),
+        aeTitle: (s.aeTitle || 'INFOMED').trim(),
+        host: (s.host || '127.0.0.1').trim(),
+        port: Number(s.port) || 104,
+        cStorePort: Number(s.cStorePort) || 11112
+      }));
+      localStorage.setItem(this.STORAGE_KEY, JSON.stringify(sanitized));
+      // Dispatch custom event for real-time reactivity across components
+      window.dispatchEvent(new CustomEvent('pacs-servers-updated', { detail: sanitized }));
     } catch (e) {
       console.warn('Failed to save PACS servers:', e);
     }
@@ -129,11 +169,19 @@ export class PacsService {
    */
   static async testEcho(server: PacsServerConfig): Promise<{ success: boolean; message: string; responseTimeMs: number }> {
     const start = performance.now();
+    const cleanServer: PacsServerConfig = {
+      ...server,
+      port: Number(server.port) || 104,
+      cStorePort: Number(server.cStorePort) || 11112,
+      callingAeTitle: (server.callingAeTitle || 'RADNODE_VIEWER').trim(),
+      aeTitle: (server.aeTitle || 'INFOMED').trim(),
+      host: (server.host || '127.0.0.1').trim()
+    };
 
     // 1. Native Electron TCP DIMSE Ping
     if (window.electronAPI?.pacsEcho) {
       try {
-        const res = await window.electronAPI.pacsEcho(server);
+        const res = await window.electronAPI.pacsEcho(cleanServer);
         return res;
       } catch (err: any) {
         console.warn('Native TCP pacsEcho error:', err);
@@ -145,7 +193,7 @@ export class PacsService {
       const res = await fetch('/api/pacs/echo', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(server),
+        body: JSON.stringify(cleanServer),
         signal: AbortSignal.timeout(5000)
       });
       if (res.ok) {
@@ -157,14 +205,14 @@ export class PacsService {
     }
 
     // 3. DICOMweb test
-    if (server.protocol === 'dicomweb' && server.qidoUrl) {
+    if (cleanServer.protocol === 'dicomweb' && cleanServer.qidoUrl) {
       try {
-        const res = await fetch(`${server.qidoUrl}/studies?limit=1`, { method: 'GET', signal: AbortSignal.timeout(3500) });
+        const res = await fetch(`${cleanServer.qidoUrl}/studies?limit=1`, { method: 'GET', signal: AbortSignal.timeout(3500) });
         const time = Math.round(performance.now() - start);
         if (res.ok || res.status === 200 || res.status === 204) {
           return {
             success: true,
-            message: `DICOMweb Connected successfully to ${server.name} (${time} ms)`,
+            message: `DICOMweb Connected successfully to ${cleanServer.name} (${time} ms)`,
             responseTimeMs: time
           };
         }
@@ -179,7 +227,7 @@ export class PacsService {
 
     return {
       success: true,
-      message: `C-ECHO Verification: Ready for PACS [${server.aeTitle}] on ${server.host}:${server.port} (${time} ms)`,
+      message: `C-ECHO Verification: Ready for PACS [${cleanServer.aeTitle}] on ${cleanServer.host}:${cleanServer.port} (${time} ms)`,
       responseTimeMs: time
     };
   }
@@ -198,11 +246,20 @@ export class PacsService {
       dateTo?: string;
     }
   ): Promise<PacsSearchResult[]> {
+    const cleanServer: PacsServerConfig = {
+      ...server,
+      port: Number(server.port) || 104,
+      cStorePort: Number(server.cStorePort) || 11112,
+      callingAeTitle: (server.callingAeTitle || 'RADNODE_VIEWER').trim(),
+      aeTitle: (server.aeTitle || 'INFOMED').trim(),
+      host: (server.host || '127.0.0.1').trim()
+    };
+
     // 1. Native Electron TCP DIMSE C-FIND
     if (window.electronAPI?.pacsSearch) {
       try {
-        const results = await window.electronAPI.pacsSearch(server, filters);
-        if (Array.isArray(results) && results.length > 0) {
+        const results = await window.electronAPI.pacsSearch(cleanServer, filters);
+        if (Array.isArray(results)) {
           return results;
         }
       } catch (err) {
@@ -212,17 +269,17 @@ export class PacsService {
 
     // 2. Dev Server Live TCP DIMSE C-FIND Proxy (Direct TCP to PACS Server)
     try {
-      console.log('[PACS] Sending C-FIND query to:', server.host, ':', server.port);
+      console.log('[PACS] Sending C-FIND query to:', cleanServer.host, ':', cleanServer.port);
       const res = await fetch('/api/pacs/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ server, filters }),
+        body: JSON.stringify({ server: cleanServer, filters }),
         signal: AbortSignal.timeout(30000)
       });
       console.log('[PACS] HTTP response status:', res.status);
       if (res.ok) {
         const liveStudies = await res.json();
-        console.log('[PACS] C-FIND returned', liveStudies.length, 'studies from', server.host);
+        console.log('[PACS] C-FIND returned', liveStudies.length, 'studies from', cleanServer.host);
         // Return live results even if empty — avoids falling through to mock data
         if (Array.isArray(liveStudies)) {
           return liveStudies;
@@ -414,7 +471,15 @@ export class PacsService {
     }
 
     const servers = this.getServers();
-    const server = servers.find(s => s.id === result.serverConfigId) || servers[0];
+    const rawServer = servers.find(s => s.id === result.serverConfigId) || servers[0];
+    const server: PacsServerConfig = {
+      ...rawServer,
+      port: Number(rawServer.port) || 104,
+      cStorePort: Number(rawServer.cStorePort) || 11112,
+      callingAeTitle: (rawServer.callingAeTitle || 'RADNODE_VIEWER').trim(),
+      aeTitle: (rawServer.aeTitle || 'INFOMED').trim(),
+      host: (rawServer.host || '127.0.0.1').trim()
+    };
     const serverName = server?.name || 'PACS Server';
 
     onProgress(10, `Connecting to ${serverName} (${server?.host || 'remote'})...`);

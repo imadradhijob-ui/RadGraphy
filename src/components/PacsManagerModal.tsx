@@ -68,14 +68,16 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
   
   // Adding server state
   const [isAddingServer, setIsAddingServer] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [serverSuccessToast, setServerSuccessToast] = useState<string | null>(null);
   const [newServer, setNewServer] = useState<Partial<PacsServerConfig>>({
     name: 'New Hospital PACS',
     aeTitle: 'INFOMED',
-    callingAeTitle: 'RADIANT_VIEWER',
+    callingAeTitle: 'RADNODE_VIEWER',
     host: '170.16.0.2',
     port: 2025,
     cStorePort: 11112,
-    retrieveMethod: 'c-move',
+    retrieveMethod: 'c-get',
     protocol: 'dimse'
   });
 
@@ -87,9 +89,11 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     const loaded = PacsService.getServers();
     setServers(loaded);
     if (loaded.length > 0) {
-      // Always prefer the Alshaab PACS server as the default selection
-      const alshaab = loaded.find(s => s.id === 'pacs_alshaab');
-      setSelectedServerId(alshaab ? alshaab.id : loaded[0].id);
+      setSelectedServerId(prev => {
+        if (prev && loaded.some(s => s.id === prev)) return prev;
+        const alshaab = loaded.find(s => s.id === 'pacs_alshaab');
+        return alshaab ? alshaab.id : loaded[0].id;
+      });
     }
     // Always reset date filters when modal opens so the user sees all data
     setDateFrom('');
@@ -99,7 +103,20 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     setStatusMessage('Ready — press Query to search the PACS server');
     setEditingServer(null);
     setIsAddingServer(false);
+    setFormError(null);
+    setServerSuccessToast(null);
   }, [isOpen]);
+
+  // Listen for storage updates
+  useEffect(() => {
+    const handleUpdate = (e: any) => {
+      if (e.detail && Array.isArray(e.detail)) {
+        setServers(e.detail);
+      }
+    };
+    window.addEventListener('pacs-servers-updated', handleUpdate);
+    return () => window.removeEventListener('pacs-servers-updated', handleUpdate);
+  }, []);
 
   const setDatePreset = (preset: 'today' | 'yesterday' | 'week' | 'month' | 'year' | 'all') => {
     setActiveDatePreset(preset);
@@ -223,9 +240,17 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
   };
 
   const handleTestEcho = async (server: PacsServerConfig) => {
+    const cleanServer: PacsServerConfig = {
+      ...server,
+      port: Number(server.port) || 104,
+      cStorePort: Number(server.cStorePort) || 11112,
+      callingAeTitle: (server.callingAeTitle || 'RADNODE_VIEWER').trim(),
+      aeTitle: (server.aeTitle || 'INFOMED').trim(),
+      host: (server.host || '127.0.0.1').trim()
+    };
     setIsTestingEcho(server.id);
     try {
-      const res = await PacsService.testEcho(server);
+      const res = await PacsService.testEcho(cleanServer);
       setEchoResult(prev => ({ ...prev, [server.id]: { success: res.success, message: res.message } }));
     } catch (err: any) {
       setEchoResult(prev => ({ ...prev, [server.id]: { success: false, message: 'Connection failed' } }));
@@ -235,27 +260,54 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
   };
 
   const handleStartEdit = (server: PacsServerConfig) => {
+    setFormError(null);
+    setServerSuccessToast(null);
     setEditingServer(server);
     setEditForm({
       ...server,
+      callingAeTitle: (server.callingAeTitle || 'RADNODE_VIEWER').trim(),
       cStorePort: server.cStorePort || 11112,
-      retrieveMethod: server.retrieveMethod || 'c-move'
+      retrieveMethod: server.retrieveMethod || 'c-get'
     });
     setIsAddingServer(false);
   };
 
   const handleSaveEditedServer = () => {
-    if (!editingServer || !editForm.name || !editForm.host || !editForm.port || !editForm.aeTitle) return;
-    
+    setFormError(null);
+    if (!editingServer) return;
+
+    const name = (editForm.name || '').trim();
+    const host = (editForm.host || '').trim();
+    const aeTitle = (editForm.aeTitle || '').trim();
+    const port = Number(editForm.port);
+    const callingAeTitle = (editForm.callingAeTitle || 'RADNODE_VIEWER').trim();
+
+    if (!name) {
+      setFormError('يرجى إدخال اسم الخادم (Server Name)');
+      return;
+    }
+    if (!aeTitle) {
+      setFormError('يرجى إدخال PACS Called AE Title');
+      return;
+    }
+    if (!host) {
+      setFormError('يرجى إدخال عنوان IP / Host للخادم');
+      return;
+    }
+    if (!port || isNaN(port) || port <= 0 || port > 65535) {
+      setFormError('يرجى إدخال رقم منفذ صحيح (Port: 1 - 65535)');
+      return;
+    }
+
     const updatedServer: PacsServerConfig = {
       ...editingServer,
-      name: editForm.name,
-      aeTitle: editForm.aeTitle.trim(),
-      callingAeTitle: (editForm.callingAeTitle || 'RADIANT_VIEWER').trim(),
-      host: editForm.host.trim(),
-      port: Number(editForm.port),
-      cStorePort: Number(editForm.cStorePort || 11112),
-      retrieveMethod: editForm.retrieveMethod || 'c-move',
+      name,
+      aeTitle,
+      callingAeTitle,
+      host,
+      port,
+      cStorePort: Number(editForm.cStorePort) || 11112,
+      retrieveMethod: editForm.retrieveMethod || 'c-get',
       protocol: editForm.protocol || 'dimse',
       wadoUrl: editForm.wadoUrl?.trim(),
       qidoUrl: editForm.qidoUrl?.trim()
@@ -264,39 +316,74 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     const updated = servers.map(s => s.id === updatedServer.id ? updatedServer : s);
     setServers(updated);
     PacsService.saveServers(updated);
+    setSelectedServerId(updatedServer.id);
     setEditingServer(null);
-    setStatusMessage(`Saved settings for PACS: ${updatedServer.name}`);
+    setFormError(null);
+    setServerSuccessToast(`تم تحديث بيانات الخادم بنجاح: ${updatedServer.name}`);
+    setStatusMessage(`تم تحديث إعدادات الباكس: ${updatedServer.name} (${updatedServer.host}:${updatedServer.port})`);
+    setTimeout(() => setServerSuccessToast(null), 4000);
   };
 
   const handleSaveNewServer = () => {
-    if (!newServer.name || !newServer.host || !newServer.port || !newServer.aeTitle) return;
+    setFormError(null);
+    const name = (newServer.name || '').trim();
+    const host = (newServer.host || '').trim();
+    const aeTitle = (newServer.aeTitle || '').trim();
+    const port = Number(newServer.port);
+    const callingAeTitle = (newServer.callingAeTitle || 'RADNODE_VIEWER').trim();
+
+    if (!name) {
+      setFormError('يرجى إدخال اسم الخادم (Server Name)');
+      return;
+    }
+    if (!aeTitle) {
+      setFormError('يرجى إدخال PACS Called AE Title');
+      return;
+    }
+    if (!host) {
+      setFormError('يرجى إدخال عنوان IP / Host للخادم');
+      return;
+    }
+    if (!port || isNaN(port) || port <= 0 || port > 65535) {
+      setFormError('يرجى إدخال رقم منفذ صحيح (Port: 1 - 65535)');
+      return;
+    }
+
     const s: PacsServerConfig = {
       id: `pacs_${Date.now()}`,
-      name: newServer.name,
-      aeTitle: newServer.aeTitle.trim(),
-      callingAeTitle: (newServer.callingAeTitle || 'RADIANT_VIEWER').trim(),
-      host: newServer.host.trim(),
-      port: Number(newServer.port),
-      cStorePort: Number(newServer.cStorePort || 11112),
-      retrieveMethod: newServer.retrieveMethod || 'c-move',
-      protocol: newServer.protocol as any || 'dimse',
+      name,
+      aeTitle,
+      callingAeTitle,
+      host,
+      port,
+      cStorePort: Number(newServer.cStorePort) || 11112,
+      retrieveMethod: newServer.retrieveMethod || 'c-get',
+      protocol: (newServer.protocol as any) || 'dimse',
       wadoUrl: newServer.wadoUrl?.trim(),
       qidoUrl: newServer.qidoUrl?.trim()
     };
+
     const updated = [...servers, s];
     setServers(updated);
     PacsService.saveServers(updated);
     setIsAddingServer(false);
     setSelectedServerId(s.id);
+    setFormError(null);
+    setServerSuccessToast(`تمت إضافة خادم الباكس بنجاح: ${s.name}`);
+    setStatusMessage(`تمت إضافة خادم الباكس الجديد: ${s.name}`);
+    setTimeout(() => setServerSuccessToast(null), 4000);
   };
 
   const handleDeleteServer = (id: string) => {
+    const deleted = servers.find(s => s.id === id);
     const updated = servers.filter(s => s.id !== id);
     setServers(updated);
     PacsService.saveServers(updated);
     if (selectedServerId === id && updated.length > 0) {
       setSelectedServerId(updated[0].id);
     }
+    setServerSuccessToast(`تم حذف خادم الباكس: ${deleted?.name || id}`);
+    setTimeout(() => setServerSuccessToast(null), 3000);
   };
 
   const currentSelectedServer = servers.find(s => s.id === selectedServerId);
@@ -716,6 +803,14 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
               )}
             </div>
 
+            {/* Server operation feedback banner */}
+            {serverSuccessToast && (
+              <div className="bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 px-3.5 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-md">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{serverSuccessToast}</span>
+              </div>
+            )}
+
             {/* Edit Server Form */}
             {editingServer && (
               <div className="bg-radiant-card border-2 border-cyan-500/70 rounded-xl p-4 space-y-4 shadow-xl">
@@ -723,11 +818,18 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                   <div className="flex items-center gap-2">
                     <Edit2 className="w-4 h-4 text-cyan-400" />
                     <h4 className="font-bold text-cyan-300 text-sm">
-                      Edit PACS Configuration: <span className="text-white font-mono">{editingServer.name}</span>
+                      تعديل إعدادات خادم الباكس: <span className="text-white font-mono">{editingServer.name}</span>
                     </h4>
                   </div>
                   <span className="text-[10px] text-slate-400 font-mono">ID: {editingServer.id}</span>
                 </div>
+
+                {formError && (
+                  <div className="bg-rose-950/80 border border-rose-500/50 text-rose-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-3">
                   <div>
@@ -736,6 +838,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       type="text"
                       value={editForm.name || ''}
                       onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      placeholder="e.g. Hospital Main PACS"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
@@ -757,7 +860,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       type="text"
                       value={editForm.callingAeTitle || ''}
                       onChange={(e) => setEditForm({ ...editForm, callingAeTitle: e.target.value })}
-                      placeholder="e.g. RADIANT_VIEWER"
+                      placeholder="e.g. RADNODE_VIEWER"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-amber-300 font-mono font-bold focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
@@ -777,8 +880,11 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                     <label className="text-[11px] text-slate-300 font-semibold block mb-1">PACS Server Port:</label>
                     <input
                       type="number"
-                      value={editForm.port || 104}
-                      onChange={(e) => setEditForm({ ...editForm, port: parseInt(e.target.value, 10) || 104 })}
+                      value={editForm.port !== undefined && editForm.port !== null ? editForm.port : ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditForm({ ...editForm, port: val === '' ? ('' as any) : parseInt(val, 10) });
+                      }}
                       placeholder="e.g. 2025 or 104"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-slate-200 font-mono focus:border-cyan-400 focus:outline-none"
                     />
@@ -788,8 +894,11 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                     <label className="text-[11px] text-slate-300 font-semibold block mb-1">Local C-STORE SCP Port:</label>
                     <input
                       type="number"
-                      value={editForm.cStorePort || 11112}
-                      onChange={(e) => setEditForm({ ...editForm, cStorePort: parseInt(e.target.value, 10) || 11112 })}
+                      value={editForm.cStorePort !== undefined && editForm.cStorePort !== null ? editForm.cStorePort : ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEditForm({ ...editForm, cStorePort: val === '' ? ('' as any) : parseInt(val, 10) });
+                      }}
                       placeholder="e.g. 11112 or 104"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-emerald-400 font-mono focus:border-cyan-400 focus:outline-none"
                     />
@@ -798,12 +907,12 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                   <div>
                     <label className="text-[11px] text-slate-300 font-semibold block mb-1">Retrieval Protocol Method:</label>
                     <select
-                      value={editForm.retrieveMethod || 'c-move'}
+                      value={editForm.retrieveMethod || 'c-get'}
                       onChange={(e) => setEditForm({ ...editForm, retrieveMethod: e.target.value as any })}
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none"
                     >
+                      <option value="c-get">C-GET (Direct download on same TCP socket - Recommended)</option>
                       <option value="c-move">C-MOVE (Reverse connection to C-STORE SCP)</option>
-                      <option value="c-get">C-GET (Direct download on same TCP socket)</option>
                     </select>
                   </div>
 
@@ -864,7 +973,10 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setEditingServer(null)}
+                      onClick={() => {
+                        setEditingServer(null);
+                        setFormError(null);
+                      }}
                       className="px-3 py-1.5 bg-radiant-darkest hover:bg-radiant-hover text-slate-300 rounded border border-radiant-border transition-colors"
                     >
                       Cancel
@@ -874,7 +986,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded flex items-center gap-1.5 shadow-md transition-colors"
                     >
                       <Save className="w-3.5 h-3.5" />
-                      <span>Save Changes</span>
+                      <span>حفظ التعديلات (Save Changes)</span>
                     </button>
                   </div>
                 </div>
@@ -887,6 +999,13 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                 <div className="flex items-center justify-between border-b border-radiant-border pb-2">
                   <h4 className="font-bold text-cyan-300 text-sm">Add New PACS Server Node:</h4>
                 </div>
+
+                {formError && (
+                  <div className="bg-rose-950/80 border border-rose-500/50 text-rose-300 px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{formError}</span>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-3">
                   <div>
@@ -917,7 +1036,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       type="text"
                       value={newServer.callingAeTitle || ''}
                       onChange={(e) => setNewServer({ ...newServer, callingAeTitle: e.target.value })}
-                      placeholder="e.g. RADIANT_VIEWER"
+                      placeholder="e.g. RADNODE_VIEWER"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-amber-300 font-mono font-bold focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
@@ -937,8 +1056,12 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                     <label className="text-[11px] text-slate-300 font-semibold block mb-1">Port:</label>
                     <input
                       type="number"
-                      value={newServer.port || 104}
-                      onChange={(e) => setNewServer({ ...newServer, port: parseInt(e.target.value, 10) || 104 })}
+                      value={newServer.port !== undefined && newServer.port !== null ? newServer.port : ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewServer({ ...newServer, port: val === '' ? ('' as any) : parseInt(val, 10) });
+                      }}
+                      placeholder="e.g. 2025 or 104"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-slate-200 font-mono focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
@@ -947,8 +1070,12 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                     <label className="text-[11px] text-slate-300 font-semibold block mb-1">Local C-STORE SCP Port:</label>
                     <input
                       type="number"
-                      value={newServer.cStorePort || 11112}
-                      onChange={(e) => setNewServer({ ...newServer, cStorePort: parseInt(e.target.value, 10) || 11112 })}
+                      value={newServer.cStorePort !== undefined && newServer.cStorePort !== null ? newServer.cStorePort : ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setNewServer({ ...newServer, cStorePort: val === '' ? ('' as any) : parseInt(val, 10) });
+                      }}
+                      placeholder="e.g. 11112 or 104"
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-emerald-400 font-mono focus:border-cyan-400 focus:outline-none"
                     />
                   </div>
@@ -956,12 +1083,12 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                   <div>
                     <label className="text-[11px] text-slate-300 font-semibold block mb-1">Retrieval Method:</label>
                     <select
-                      value={newServer.retrieveMethod || 'c-move'}
+                      value={newServer.retrieveMethod || 'c-get'}
                       onChange={(e) => setNewServer({ ...newServer, retrieveMethod: e.target.value as any })}
                       className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-slate-200 focus:border-cyan-400 focus:outline-none"
                     >
-                      <option value="c-move">C-MOVE</option>
-                      <option value="c-get">C-GET</option>
+                      <option value="c-get">C-GET (Direct download)</option>
+                      <option value="c-move">C-MOVE (Reverse C-STORE SCP)</option>
                     </select>
                   </div>
 
@@ -980,7 +1107,10 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
 
                 <div className="flex justify-end gap-2 pt-2 border-t border-radiant-border">
                   <button
-                    onClick={() => setIsAddingServer(false)}
+                    onClick={() => {
+                      setIsAddingServer(false);
+                      setFormError(null);
+                    }}
                     className="px-3 py-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 rounded border border-radiant-border"
                   >
                     Cancel

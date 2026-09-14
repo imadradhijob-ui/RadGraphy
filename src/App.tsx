@@ -14,6 +14,9 @@ import { Volume3dModal } from './components/Volume3dModal';
 import { KeyImagesModal } from './components/KeyImagesModal';
 import { ReportGeneratorModal } from './components/ReportGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
+import { BottomStatusBar } from './components/BottomStatusBar';
+import { ShortcutsModal } from './components/ShortcutsModal';
+import JSZip from 'jszip';
 
 import {
   DicomInstance,
@@ -31,6 +34,7 @@ import {
   PacsSearchResult
 } from './types/dicom';
 import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './services/dicomParser';
+import { detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice } from './services/mprEngine';
 import { PacsService } from './services/pacsClient';
 import { Loader2 } from 'lucide-react';
 
@@ -46,6 +50,7 @@ export const App: React.FC = () => {
   const [gridLayout, setGridLayout] = useState<GridLayout>('1x1');
   const [activeViewportId, setActiveViewportId] = useState<string>('vp_0');
   const [isMprActive, setIsMprActive] = useState<boolean>(false);
+  const [mprInitialLayout, setMprInitialLayout] = useState<'2x2' | '3-view' | 'coronal-only' | 'axial-only' | 'sagittal-only'>('2x2');
   const [syncMode, setSyncMode] = useState<SyncMode>('none');
 
   // Key image bookmarks
@@ -63,6 +68,8 @@ export const App: React.FC = () => {
   const [isAboutModalOpen, setIsAboutModalOpen] = useState<boolean>(false);
   const [is3dModalOpen, setIs3dModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
+  const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
+  const [showOverlays, setShowOverlays] = useState<boolean>(true);
 
   // Streaming Background Loading State
   const [loadingStatus, setLoadingStatus] = useState<{
@@ -78,6 +85,15 @@ export const App: React.FC = () => {
   const showNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 4000);
+  };
+
+  const handleToggleOverlays = () => {
+    setShowOverlays(prev => {
+      const next = !prev;
+      setViewports(vps => vps.map(v => ({ ...v, showOverlays: next })));
+      showNotification(next ? 'Medical HUD text overlays enabled' : 'Clean view enabled (HUD hidden)');
+      return next;
+    });
   };
 
   // Hidden File Inputs
@@ -209,7 +225,7 @@ export const App: React.FC = () => {
 
   const handleSelectStudy = (study: DicomStudy) => {
     setActiveStudyUid(study.studyInstanceUid);
-    const targetSer = [...study.series].sort((a, b) => b.instances.length - a.instances.length)[0] || study.series[0];
+    const targetSer = findMainVolumetricSeries(study) || study.series[0];
     if (targetSer) {
       setActiveSeriesUid(targetSer.seriesInstanceUid);
       const firstInst = targetSer.instances[0];
@@ -399,8 +415,36 @@ export const App: React.FC = () => {
       await Promise.all(
         batch.map(async (file) => {
           try {
+            const isZip = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
             const buffer = await file.arrayBuffer();
-            if (isDicomBuffer(buffer)) {
+
+            if (isZip) {
+              setLoadingStatus({
+                loaded: i,
+                total: fileArray.length,
+                percent: Math.round(((i + 1) / fileArray.length) * 100),
+                message: `Unpacking ZIP archive: ${file.name}...`
+              });
+
+              const zip = await JSZip.loadAsync(buffer);
+              const entries: JSZip.JSZipObject[] = [];
+              zip.forEach((_, zipEntry) => {
+                if (!zipEntry.dir) entries.push(zipEntry);
+              });
+
+              for (const entry of entries) {
+                try {
+                  const entryBuf = await entry.async('arraybuffer');
+                  if (isDicomBuffer(entryBuf)) {
+                    const inst = parseDicomBufferFast(entryBuf, entry.name);
+                    if (inst) {
+                      inst.filePath = `${file.name}/${entry.name}`;
+                      parsedInstances.push(inst);
+                    }
+                  }
+                } catch (_) {}
+              }
+            } else if (isDicomBuffer(buffer)) {
               const inst = parseDicomBufferFast(buffer, file.name);
               if (inst) {
                 inst.filePath = (file as any).path || file.name;
@@ -495,9 +539,56 @@ export const App: React.FC = () => {
     if ((window as any).electronAPI?.closeWindow) {
       (window as any).electronAPI.closeWindow();
     } else {
-      if (confirm('Are you sure you want to exit Radiner?')) {
+      if (confirm('Are you sure you want to exit RadNode Viewer?')) {
         window.close();
         window.location.href = 'about:blank';
+      }
+    }
+  };
+
+  // Switch to or open MPR layout with matching anatomical plane series
+  const handleOpenMprLayout = (layout: '2x2' | '3-view' | 'coronal-only' | 'axial-only' | 'sagittal-only') => {
+    const currentStudy = activeStudy || studies[0] || null;
+    if (currentStudy && currentStudy.series.length > 0) {
+      if (layout === '2x2' || layout === '3-view') {
+        // Multi-view (2x2 or 1x3): ALWAYS automatically select the main volumetric series (Axial CT with most slices)
+        // regardless of whether any series was previously clicked or active!
+        const mainVol = findMainVolumetricSeries(currentStudy);
+        if (mainVol) {
+          handleSelectSeries(mainVol);
+        }
+        setMprInitialLayout(layout);
+        setIsMprActive(true);
+      } else {
+        // Single plane layout: coronal-only, axial-only, sagittal-only
+        const targetPlane =
+          layout === 'coronal-only' ? 'CORONAL' :
+          layout === 'axial-only' ? 'AXIAL' : 'SAGITTAL';
+
+        // Check if there is a real native multi-slice series for this plane (strictly NOT a topogram or single-slice)
+        const matchingMultiSliceSeries = currentStudy.series.find((s) => {
+          if (isTopogramOrSingleSlice(s) || s.instances.length < 2) return false;
+          const rep = s.instances[Math.floor(s.instances.length / 2)] || s.instances[0];
+          return detectAnatomicalPlane(s.seriesDescription, rep?.imageOrientationPatient) === targetPlane;
+        });
+
+        if (matchingMultiSliceSeries) {
+          handleSelectSeries(matchingMultiSliceSeries);
+          // If the user was in normal 2D viewing mode, show the native acquired series directly
+          if (!isMprActive) {
+            setIsMprActive(false);
+            return;
+          }
+        } else {
+          // If no separate multi-slice series exists, pick the main volumetric series (Axial CT)
+          // to reconstruct this plane in MPR! NEVER pick a topogram!
+          const mainVol = findMainVolumetricSeries(currentStudy);
+          if (mainVol) {
+            handleSelectSeries(mainVol);
+          }
+        }
+        setMprInitialLayout(layout);
+        setIsMprActive(true);
       }
     }
   };
@@ -558,9 +649,18 @@ export const App: React.FC = () => {
       else if (e.key.toLowerCase() === 'l') setActiveTool('loupe');
       else if (e.key.toLowerCase() === 'b') handleBookmarkCurrentSlice();
       else if (e.key.toLowerCase() === 'd') setActiveTool('distance');
+      else if (e.key.toLowerCase() === 't') {
+        setActiveTool('arrow');
+        showNotification('Arrow & Lesion Annotation Tool Selected [T]');
+      }
+      else if (e.key.toLowerCase() === 'o') handleToggleOverlays();
+      else if (e.key === '?' || e.key === 'F1') setIsShortcutsModalOpen(true);
       else if (e.key.toLowerCase() === 'a') setActiveTool('angle');
       else if (e.key.toLowerCase() === 'r') setActiveTool('rectangle_roi');
       else if (e.key.toLowerCase() === 'e') setActiveTool('ellipse_roi');
+      else if (e.key.toLowerCase() === 'h') setActiveTool('hu_probe');
+      else if (e.key.toLowerCase() === 'i') handleInvert();
+      else if (e.key.toLowerCase() === 'f') handleFlipH();
       else if (e.code === 'Space') {
         e.preventDefault();
         updateActiveViewport({ cinePlaying: !currentViewport.cinePlaying });
@@ -635,10 +735,18 @@ export const App: React.FC = () => {
         onFlipH={handleFlipH}
         onFlipV={handleFlipV}
         onInvert={handleInvert}
-        onToggleMpr={() => setIsMprActive(!isMprActive)}
+        onToggleMpr={() => {
+          if (!isMprActive) {
+            handleOpenMprLayout(mprInitialLayout || '2x2');
+          } else {
+            setIsMprActive(false);
+          }
+        }}
+        onOpenMprLayout={handleOpenMprLayout}
         onOpenTags={() => setIsTagModalOpen(true)}
         onOpenAbout={() => setIsAboutModalOpen(true)}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
       />
 
       {/* 3. Main Tool Bar */}
@@ -661,7 +769,14 @@ export const App: React.FC = () => {
         currentMipSlab={currentViewport.mipSlabThickness || 1}
         onSetMip={(mode, slab) => updateActiveViewport({ mipMode: mode, mipSlabThickness: slab })}
         isMprActive={isMprActive}
-        onToggleMpr={() => setIsMprActive(!isMprActive)}
+        onToggleMpr={() => {
+          if (!isMprActive) {
+            handleOpenMprLayout(mprInitialLayout || '2x2');
+          } else {
+            setIsMprActive(false);
+          }
+        }}
+        onOpenMprLayout={handleOpenMprLayout}
         onOpen3D={() => setIs3dModalOpen(true)}
         isCinePlaying={currentViewport.cinePlaying}
         onToggleCine={() => updateActiveViewport({ cinePlaying: !currentViewport.cinePlaying })}
@@ -675,6 +790,9 @@ export const App: React.FC = () => {
         bookmarksCount={bookmarks.length}
         onOpenBookmarks={() => setIsKeyImagesModalOpen(true)}
         onOpenReport={() => setIsReportModalOpen(true)}
+        showOverlays={showOverlays}
+        onToggleOverlays={handleToggleOverlays}
+        onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
       />
 
       {/* 4. Central Workstation Workspace (Sidebar + Viewport Grid or MPR) */}
@@ -698,7 +816,20 @@ export const App: React.FC = () => {
             <MprViewportView
               series={activeSeries}
               study={activeStudy}
+              initialLayout={mprInitialLayout}
               onClose={() => setIsMprActive(false)}
+              onSelectSeries={handleSelectSeries}
+              activeTool={activeTool}
+              onSelectTool={setActiveTool}
+              windowCenter={currentViewport.windowCenter}
+              windowWidth={currentViewport.windowWidth}
+              onUpdateWindowing={(wc, ww) => updateActiveViewport({ windowCenter: wc, windowWidth: ww })}
+              lut={currentViewport.lut || 'grayscale'}
+              onSetLut={(lut) => updateActiveViewport({ lut })}
+              invert={currentViewport.invert || false}
+              onToggleInvert={handleInvert}
+              showOverlays={showOverlays}
+              onToggleOverlays={handleToggleOverlays}
             />
           ) : (
             <ViewportGrid
@@ -713,6 +844,18 @@ export const App: React.FC = () => {
               onDropSeriesOnViewport={handleDropSeriesOnViewport}
             />
           )}
+
+          {/* High-Tech Medical Telemetry Bottom Status Bar */}
+          <BottomStatusBar
+            activeStudy={activeStudy}
+            activeSeries={activeSeries}
+            activeInstance={activeInstance}
+            viewportState={currentViewport}
+            showOverlays={showOverlays}
+            onToggleOverlays={handleToggleOverlays}
+            onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+            totalStudiesCount={studies.length}
+          />
         </main>
       </div>
 
@@ -721,6 +864,7 @@ export const App: React.FC = () => {
         type="file"
         ref={fileInputRef}
         multiple
+        accept=".dcm,.dicom,.zip,application/dicom,application/zip"
         onChange={handleFileChange}
         className="hidden"
       />
@@ -822,6 +966,11 @@ export const App: React.FC = () => {
         onClose={() => setIs3dModalOpen(false)}
         series={activeSeries}
         study={activeStudy}
+      />
+
+      <ShortcutsModal
+        isOpen={isShortcutsModalOpen}
+        onClose={() => setIsShortcutsModalOpen(false)}
       />
     </div>
   );

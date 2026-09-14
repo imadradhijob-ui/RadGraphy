@@ -21,7 +21,7 @@ export const DEFAULT_USER_PROFILE: UserProfileSettings = {
   phone: '+1 (555) 234-5678',
   email: 'radiology@hospital-imaging.org',
   headerNote: 'CONFIDENTIAL MEDICAL DIAGNOSTIC REPORT',
-  footerNote: 'This report was interpreted and electronically verified on Radiner Calibrated PACS Workstation.'
+  footerNote: 'This report was interpreted and electronically verified on RadNode Viewer Calibrated PACS Workstation - Al-Shaab Hospital.'
 };
 
 const STORAGE_KEY = 'radiner_user_profile_settings';

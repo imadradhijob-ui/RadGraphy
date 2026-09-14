@@ -7,14 +7,23 @@ const { testDicomEcho, searchDicomStudies, retrieveDicomStudy } = require('./dic
 let mainWindow = null;
 
 function createWindow() {
+  const candidateIconPaths = [
+    path.join(app.getAppPath(), 'dist/icon.png'),
+    path.join(app.getAppPath(), 'dist/icon.ico'),
+    path.join(__dirname, '../dist/icon.png'),
+    path.join(__dirname, '../public/icon.png'),
+    path.join(__dirname, '../build/icon.ico')
+  ];
+  const windowIconPath = candidateIconPaths.find(p => fs.existsSync(p)) || path.join(__dirname, '../public/icon.png');
+
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1024,
     minHeight: 700,
     backgroundColor: '#0B0F17',
-    title: 'Radiner Version 0.0.5',
-    icon: path.join(__dirname, '../public/icon.png'),
+    title: 'RadNode Viewer Version 0.0.6',
+    icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,

@@ -114,6 +114,7 @@ export type ToolType =
   | 'angle'
   | 'cobb_angle'
   | 'ctr'
+  | 'arrow'
   | 'rectangle_roi'
   | 'ellipse_roi'
   | 'hu_probe';
@@ -171,6 +172,7 @@ export interface Measurement {
   probeHu?: number;
   probeCoord?: Point2D;
   tissueName?: string;
+  arrowText?: string;
   isFinished: boolean;
 }
 
@@ -213,6 +215,7 @@ export interface ViewportState {
   cinePlaying: boolean;
   cineFps: number;
   measurements: Measurement[];
+  showOverlays?: boolean;
 }
 
 export interface WindowPreset {

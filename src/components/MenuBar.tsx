@@ -18,7 +18,9 @@ import {
   Eye,
   Info,
   HelpCircle,
-  Layers
+  Layers,
+  Keyboard,
+  FileCheck
 } from 'lucide-react';
 import { DEFAULT_WINDOW_PRESETS } from '../services/windowPresets';
 import { GridLayout, ToolType } from '../types/dicom';
@@ -38,9 +40,11 @@ interface MenuBarProps {
   onFlipV: () => void;
   onInvert: () => void;
   onToggleMpr: () => void;
+  onOpenMprLayout?: (layout: '2x2' | '3-view' | 'coronal-only' | 'axial-only' | 'sagittal-only') => void;
   onOpenTags: () => void;
   onOpenAbout: () => void;
   onOpenSettings?: () => void;
+  onOpenShortcuts?: () => void;
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({
@@ -58,9 +62,11 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onFlipV,
   onInvert,
   onToggleMpr,
+  onOpenMprLayout,
   onOpenTags,
   onOpenAbout,
-  onOpenSettings
+  onOpenSettings,
+  onOpenShortcuts
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -331,11 +337,40 @@ export const MenuBar: React.FC<MenuBarProps> = ({
         {openMenu === 'mpr' && (
           <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
             <button
-              onClick={() => executeAndClose(onToggleMpr)}
+              onClick={() => executeAndClose(() => (onOpenMprLayout ? onOpenMprLayout('2x2') : onToggleMpr()))}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 font-bold text-cyan-300"
             >
-              <Layers className="w-3.5 h-3.5" />
-              <span>Multi-Planar Reconstruction (MPR)</span>
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>3D MPR (2×2 with 3D)</span>
+            </button>
+            <button
+              onClick={() => executeAndClose(() => (onOpenMprLayout ? onOpenMprLayout('3-view') : onToggleMpr()))}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 text-slate-200"
+            >
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>3D MPR (1×3 Tri-View)</span>
+            </button>
+            <div className="my-1 border-t border-slate-700/60" />
+            <button
+              onClick={() => executeAndClose(() => (onOpenMprLayout ? onOpenMprLayout('coronal-only') : onToggleMpr()))}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 text-slate-200"
+            >
+              <span className="w-2 h-2 rounded-full bg-amber-400" />
+              <span>Coronal Plane</span>
+            </button>
+            <button
+              onClick={() => executeAndClose(() => (onOpenMprLayout ? onOpenMprLayout('axial-only') : onToggleMpr()))}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 text-slate-200"
+            >
+              <span className="w-2 h-2 rounded-full bg-sky-400" />
+              <span>Axial Plane</span>
+            </button>
+            <button
+              onClick={() => executeAndClose(() => (onOpenMprLayout ? onOpenMprLayout('sagittal-only') : onToggleMpr()))}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 text-slate-200"
+            >
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span>Sagittal Plane</span>
             </button>
           </div>
         )}
@@ -380,13 +415,44 @@ export const MenuBar: React.FC<MenuBarProps> = ({
           Help
         </button>
         {openMenu === 'help' && (
-          <div className="absolute left-0 top-full mt-1 w-56 bg-radiant-panel border border-radiant-border rounded shadow-2xl py-1 text-xs text-slate-200 z-50">
+          <div className="absolute left-0 top-full mt-1 w-64 bg-radiant-panel border border-radiant-border rounded-xl shadow-2xl py-1.5 text-xs text-slate-200 z-50">
+            {onOpenShortcuts && (
+              <button
+                onClick={() => executeAndClose(onOpenShortcuts)}
+                className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center justify-between"
+              >
+                <div className="flex items-center gap-2">
+                  <Keyboard className="w-3.5 h-3.5 text-cyan-400" />
+                  <span>Keyboard Shortcuts Guide...</span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-mono">?</span>
+              </button>
+            )}
+
             <button
               onClick={() => executeAndClose(onOpenAbout)}
               className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"
             >
+              <FileCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>DICOM Conformance Statement</span>
+            </button>
+
+            <button
+              onClick={() => executeAndClose(onOpenPacs)}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2"
+            >
+              <Server className="w-3.5 h-3.5 text-purple-400" />
+              <span>PACS Server & Storage Help...</span>
+            </button>
+
+            <div className="my-1 border-t border-radiant-border" />
+
+            <button
+              onClick={() => executeAndClose(onOpenAbout)}
+              className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 font-bold text-cyan-300"
+            >
               <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
-              <span>About Radiner</span>
+              <span>About RadNode Viewer</span>
             </button>
           </div>
         )}

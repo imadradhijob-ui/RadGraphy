@@ -462,7 +462,7 @@ function testDicomEcho(serverConfig) {
     const host = serverConfig.host || '127.0.0.1';
     const port = Number(serverConfig.port) || 104;
     const calledAe = serverConfig.aeTitle || 'INFOMED';
-    const callingAe = serverConfig.callingAeTitle || 'RADIANT_VIEWER';
+    const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
     const socket = new net.Socket();
     let state = 'CONNECTING';
@@ -858,7 +858,7 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
     const host = serverConfig.host || '127.0.0.1';
     const port = Number(serverConfig.port) || 104;
     const calledAe = serverConfig.aeTitle || 'INFOMED';
-    const callingAe = serverConfig.callingAeTitle || 'RADIANT_VIEWER';
+    const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
     const socket = new net.Socket();
     socket.setNoDelay(true);
@@ -1106,7 +1106,7 @@ function searchDicomStudies(serverConfig, filters = {}) {
     const host = serverConfig.host || '127.0.0.1';
     const port = Number(serverConfig.port) || 104;
     const calledAe = serverConfig.aeTitle || 'INFOMED';
-    const callingAe = serverConfig.callingAeTitle || 'RADIANT_VIEWER';
+    const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
     const socket = new net.Socket();
     let querySent = false;
@@ -1298,7 +1298,7 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
     const host = serverConfig.host || '127.0.0.1';
     const port = Number(serverConfig.port) || 104;
     const calledAe = serverConfig.aeTitle || 'INFOMED';
-    const callingAe = serverConfig.callingAeTitle || 'RADIANT_VIEWER';
+    const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
     const socket = new net.Socket();
     socket.setNoDelay(true);

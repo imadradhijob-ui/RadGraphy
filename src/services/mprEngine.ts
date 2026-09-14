@@ -1,4 +1,4 @@
-import { DicomInstance, DicomSeries, MprPlane } from '../types/dicom';
+import { DicomInstance, DicomSeries, DicomStudy, MprPlane } from '../types/dicom';
 import { getOrDecodeInstancePixels } from './dicomParser';
 
 export type ProjectionMode = 'none' | 'mip' | 'minip' | 'avg';
@@ -27,26 +27,205 @@ export interface MprSliceResult {
   aspectRatio: number;
 }
 
+/**
+ * Helper to identify anatomical acquisition plane (Axial, Coronal, Sagittal) from series description or IOP.
+ * Prioritizes explicit series description naming as designated by the radiologist/technician.
+ */
+export function detectAnatomicalPlane(
+  description: string = '',
+  iop?: [number, number, number, number, number, number]
+): 'AXIAL' | 'CORONAL' | 'SAGITTAL' | null {
+  const d = (description || '').toLowerCase().trim();
+
+  // 1. Primary: Series Description parsing (Always respects human naming by radiologist / scanner)
+  if (
+    /(?:^|[^a-z0-9])(coronal|cor)(?:[^a-z0-9]|$)/i.test(d) ||
+    d.includes('coronal') ||
+    d.startsWith('cor ') ||
+    d.endsWith(' cor') ||
+    d.includes('_cor') ||
+    d.includes('cor_') ||
+    d.includes('-cor') ||
+    d.includes('cor-')
+  ) {
+    return 'CORONAL';
+  }
+
+  if (
+    /(?:^|[^a-z0-9])(sagittal|sag)(?:[^a-z0-9]|$)/i.test(d) ||
+    d.includes('sagittal') ||
+    d.startsWith('sag ') ||
+    d.endsWith(' sag') ||
+    d.includes('_sag') ||
+    d.includes('sag_') ||
+    d.includes('-sag') ||
+    d.includes('sag-')
+  ) {
+    return 'SAGITTAL';
+  }
+
+  if (
+    /(?:^|[^a-z0-9])(axial|axi|ax|transverse|tra)(?:[^a-z0-9]|$)/i.test(d) ||
+    d.includes('axial') ||
+    d.includes('transverse') ||
+    d.startsWith('ax ') ||
+    d.endsWith(' ax') ||
+    d.includes('_ax') ||
+    d.includes('ax_') ||
+    d.includes('-ax') ||
+    d.includes('ax-') ||
+    d.startsWith('tra ') ||
+    d.endsWith(' tra') ||
+    d.includes('_tra') ||
+    d.includes('tra_')
+  ) {
+    return 'AXIAL';
+  }
+
+  // 2. Secondary: Image Orientation Patient (0020,0037) fallback when description is generic
+  if (iop && iop.length >= 6) {
+    const nx = iop[1] * iop[5] - iop[2] * iop[4];
+    const ny = iop[2] * iop[3] - iop[0] * iop[5];
+    const nz = iop[0] * iop[4] - iop[1] * iop[3];
+    const absX = Math.abs(nx);
+    const absY = Math.abs(ny);
+    const absZ = Math.abs(nz);
+    const maxNorm = Math.max(absX, absY, absZ);
+    if (maxNorm > 0.4) {
+      if (absZ >= absX && absZ >= absY) return 'AXIAL';
+      if (absY >= absX && absY >= absZ) return 'CORONAL';
+      if (absX >= absY && absX >= absZ) return 'SAGITTAL';
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Detects if a series is a Topogram / Scout / Localizer or single-slice reference image
+ * which should NEVER be used as a 3D volumetric series or selected for MPR planes.
+ */
+export function isTopogramOrSingleSlice(series?: DicomSeries | null): boolean {
+  if (!series || !series.instances || series.instances.length <= 1) return true;
+  const d = (series.seriesDescription || '').toLowerCase().trim();
+  return (
+    d.includes('topogram') ||
+    d.includes('scout') ||
+    d.includes('localizer') ||
+    d.includes('survey') ||
+    d.includes('surv') ||
+    d.includes('scanogram') ||
+    d.includes('pilot') ||
+    d.includes('topo')
+  );
+}
+
+/**
+ * Finds the primary 3D volumetric series of a study (e.g. 770-slice Axial CT scan),
+ * strictly ignoring topograms, scouts, and single-slice images.
+ * Prefers the multi-slice AXIAL acquisition with the highest instance count.
+ */
+export function findMainVolumetricSeries(study?: DicomStudy | null): DicomSeries | null {
+  if (!study || !study.series || study.series.length === 0) return null;
+
+  // 1. Filter out topograms, scouts, and series with <= 1 slice
+  const candidates = study.series.filter(
+    (s) => !isTopogramOrSingleSlice(s) && s.instances && s.instances.length >= 2
+  );
+
+  if (candidates.length === 0) {
+    // Fallback if every series is small or single-slice: pick series with highest instances
+    return [...study.series].sort((a, b) => (b.instances?.length || 0) - (a.instances?.length || 0))[0] || null;
+  }
+
+  // 2. Sort by number of slices descending
+  candidates.sort((a, b) => b.instances.length - a.instances.length);
+
+  // 3. Prefer AXIAL multi-slice acquisition (standard CT/MRI volume)
+  const bestAxial = candidates.find((s) => {
+    const rep = s.instances[Math.floor(s.instances.length / 2)] || s.instances[0];
+    return detectAnatomicalPlane(s.seriesDescription, rep?.imageOrientationPatient) === 'AXIAL';
+  });
+
+  return bestAxial || candidates[0];
+}
+
 export class MprEngine {
   /**
-   * Constructs a contiguous 3D voxel volume from a sorted series of DICOM instances
+   * Constructs a contiguous 3D voxel volume from a sorted series of DICOM instances,
+   * canonicalizing axes so:
+   *   dimX = Right-to-Left (Lateral)
+   *   dimY = Anterior-to-Posterior (Frontal)
+   *   dimZ = Superior-to-Inferior (Head-to-Feet)
+   * regardless of whether the source series was acquired in Axial, Coronal, or Sagittal.
    */
   static buildVolume(series: DicomSeries): Volume3D | null {
     if (!series.instances || series.instances.length < 2) {
       return null;
     }
 
-    const instances = series.instances;
-    const dimZ = instances.length;
-    const firstInst = instances[0];
-    const dimX = firstInst.columns;
-    const dimY = firstInst.rows;
+    const firstRep = series.instances[0];
+    const repIop = firstRep.imageOrientationPatient;
+    const detectedPlane = detectAnatomicalPlane(series.seriesDescription, repIop) || 'AXIAL';
 
-    const spacingX = firstInst.pixelSpacing?.[1] || 1.0;
-    const spacingY = firstInst.pixelSpacing?.[0] || 1.0;
+    // Sort instances to match natural acquisition sequence (1..N) or anatomical ordering
+    const instances = [...series.instances].sort((a, b) => {
+      // Primary: standard instanceNumber acquisition order
+      if (a.instanceNumber !== undefined && b.instanceNumber !== undefined && a.instanceNumber !== b.instanceNumber) {
+        return a.instanceNumber - b.instanceNumber;
+      }
+      if (detectedPlane === 'CORONAL') {
+        const yA = a.imagePositionPatient?.[1];
+        const yB = b.imagePositionPatient?.[1];
+        if (yA !== undefined && yB !== undefined) return yA - yB;
+      } else if (detectedPlane === 'SAGITTAL') {
+        const xA = a.imagePositionPatient?.[0];
+        const xB = b.imagePositionPatient?.[0];
+        if (xA !== undefined && xB !== undefined) return xA - xB;
+      } else {
+        // Fallback: anatomical Head to Feet (Superior to Inferior)
+        const zA = a.imagePositionPatient?.[2] ?? a.sliceLocation;
+        const zB = b.imagePositionPatient?.[2] ?? b.sliceLocation;
+        if (zA !== undefined && zB !== undefined && Math.abs(zA - zB) > 0.001) {
+          return zB - zA; // Higher Z (Head) to lower Z (Feet)
+        }
+      }
+      return 0;
+    });
+
+    // Ensure slice orientation matches standard LPS coordinates:
+    if (instances.length >= 2) {
+      if (detectedPlane === 'AXIAL') {
+        const z0 = instances[0].imagePositionPatient?.[2] ?? instances[0].sliceLocation;
+        const zN = instances[instances.length - 1].imagePositionPatient?.[2] ?? instances[instances.length - 1].sliceLocation;
+        if (z0 !== undefined && zN !== undefined && z0 < zN) {
+          instances.reverse();
+        }
+      } else if (detectedPlane === 'CORONAL') {
+        const y0 = instances[0].imagePositionPatient?.[1];
+        const yN = instances[instances.length - 1].imagePositionPatient?.[1];
+        if (y0 !== undefined && yN !== undefined && y0 > yN) {
+          instances.reverse();
+        }
+      } else if (detectedPlane === 'SAGITTAL') {
+        const x0 = instances[0].imagePositionPatient?.[0];
+        const xN = instances[instances.length - 1].imagePositionPatient?.[0];
+        if (x0 !== undefined && xN !== undefined && x0 > xN) {
+          instances.reverse();
+        }
+      }
+    }
+
+    const firstInst = instances[0];
+    const rawCols = firstInst.columns;
+    const rawRows = firstInst.rows;
+    const rawSlices = instances.length;
+
+    const rawPixelSpacingX = firstInst.pixelSpacing?.[1] || 1.0;
+    const rawPixelSpacingY = firstInst.pixelSpacing?.[0] || 1.0;
     
-    // Accurate physical Z-spacing calculation from ImagePositionPatient or sliceLocation across full series
-    let spacingZ = firstInst.sliceThickness || 1.0;
+    // Accurate physical slice spacing calculation
+    let sliceSpacing = firstInst.sliceThickness || 1.0;
     if (instances.length >= 2) {
       if (instances[0].imagePositionPatient && instances[instances.length - 1].imagePositionPatient) {
         const p0 = instances[0].imagePositionPatient;
@@ -57,20 +236,27 @@ export class MprEngine {
           Math.pow(pN[2] - p0[2], 2)
         );
         if (totalDist > 0.05) {
-          spacingZ = totalDist / (instances.length - 1);
+          sliceSpacing = totalDist / (instances.length - 1);
         }
       } else if (instances[0].sliceLocation !== undefined && instances[instances.length - 1].sliceLocation !== undefined) {
         const p0 = instances[0].sliceLocation;
         const pN = instances[instances.length - 1].sliceLocation;
         const totalDist = Math.abs(pN - p0);
         if (totalDist > 0.05) {
-          spacingZ = totalDist / (instances.length - 1);
+          sliceSpacing = totalDist / (instances.length - 1);
         }
       } else if (firstInst.rawTags?.['(0018,0088)']?.value) {
         const val = parseFloat(String(firstInst.rawTags['(0018,0088)'].value));
-        if (!isNaN(val) && val > 0.05) spacingZ = val;
+        if (!isNaN(val) && val > 0.05) sliceSpacing = val;
       }
     }
+
+    const dimX = rawCols;
+    const dimY = rawRows;
+    const dimZ = rawSlices;
+    const spacingX = rawPixelSpacingX;
+    const spacingY = rawPixelSpacingY;
+    const spacingZ = sliceSpacing;
 
     const totalVoxels = dimX * dimY * dimZ;
     const volumeData = new Int16Array(totalVoxels);
@@ -171,7 +357,7 @@ export class MprEngine {
         height: dimY,
         huData: sliceHu,
         pixelSpacing: [spacingY, spacingX],
-        scaleY: 1.0,
+        scaleY: spacingX > 0 ? (spacingY / spacingX) : 1.0,
         aspectRatio: (dimY * spacingY) / (dimX * spacingX)
       };
     } else if (plane === 'coronal') {
@@ -184,7 +370,7 @@ export class MprEngine {
       const slabSlices = Math.max(1, Math.round(slabThicknessMm / spacingY));
 
       for (let z = 0; z < dimZ; z++) {
-        const zOffset = (dimZ - 1 - z) * dimX * dimY; // Superior is up
+        const zOffset = z * dimX * dimY; // Superior (Head) is at z=0 (top of image)
         for (let x = 0; x < dimX; x++) {
           const outIdx = z * width + x;
 
@@ -241,7 +427,7 @@ export class MprEngine {
       const slabSlices = Math.max(1, Math.round(slabThicknessMm / spacingX));
 
       for (let z = 0; z < dimZ; z++) {
-        const zOffset = (dimZ - 1 - z) * dimX * dimY;
+        const zOffset = z * dimX * dimY; // Superior (Head) is at z=0 (top of image)
         for (let y = 0; y < dimY; y++) {
           const outIdx = z * width + y;
 

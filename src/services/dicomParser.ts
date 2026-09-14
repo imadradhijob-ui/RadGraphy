@@ -430,7 +430,7 @@ function renderSingleDoseReportPage(
 
   ctx.font = '9.5px system-ui, sans-serif';
   ctx.fillStyle = '#64748b';
-  ctx.fillText('Radiner Medical Platform • SOP: 1.2.840.10008.5.1.4.1.1.88.67', 14, height - 9);
+  ctx.fillText('RadNode Viewer Platform • SOP: 1.2.840.10008.5.1.4.1.1.88.67', 14, height - 9);
   ctx.textAlign = 'right';
   ctx.fillText('X-Ray Radiation Dose SR', width - 14, height - 9);
   ctx.textAlign = 'left';
@@ -661,6 +661,23 @@ export function parseDicomBufferFast(
   const getNumber = (tagHex: string, dcmjsKey?: string, def = 0): number => {
     if (dataSet) {
       try {
+        const elem = dataSet.elements?.[tagHex];
+        if (elem?.vr) {
+          const vr = elem.vr;
+          if (vr === 'US') {
+            const v = dataSet.uint16(tagHex);
+            if (v !== undefined && !isNaN(v)) return v;
+          } else if (vr === 'UL') {
+            const v = dataSet.uint32(tagHex);
+            if (v !== undefined && !isNaN(v)) return v;
+          } else if (vr === 'SS') {
+            const v = dataSet.int16(tagHex);
+            if (v !== undefined && !isNaN(v)) return v;
+          } else if (vr === 'SL') {
+            const v = dataSet.int32(tagHex);
+            if (v !== undefined && !isNaN(v)) return v;
+          }
+        }
         const val = dataSet.string(tagHex);
         if (val !== undefined && val !== null && val !== '') {
           const parsed = parseFloat(val);
@@ -668,8 +685,6 @@ export function parseDicomBufferFast(
         }
         const uVal = dataSet.uint16(tagHex);
         if (uVal !== undefined && !isNaN(uVal)) return uVal;
-        const iVal = dataSet.int16(tagHex);
-        if (iVal !== undefined && !isNaN(iVal)) return iVal;
         const numVal = dataSet.uint32(tagHex);
         if (numVal !== undefined && !isNaN(numVal)) return numVal;
       } catch {}
@@ -714,7 +729,23 @@ export function parseDicomBufferFast(
     }
   }
 
-  const { offset: pixelDataOffset, length: rawPixelLen, found: pixelFound } = findPixelDataOffsetAndLength(byteArray);
+  // Reliable Pixel Data offset and length extraction from parser or fallback byte scan
+  let pixelDataOffset = 128;
+  let rawPixelLen = 0;
+  let pixelFound = false;
+
+  if (dataSet?.elements?.x7fe00010) {
+    const pElem = dataSet.elements.x7fe00010;
+    pixelDataOffset = pElem.dataOffset;
+    rawPixelLen = pElem.length;
+    pixelFound = true;
+  } else {
+    const fallback = findPixelDataOffsetAndLength(byteArray);
+    pixelDataOffset = fallback.offset;
+    rawPixelLen = fallback.length;
+    pixelFound = fallback.found;
+  }
+
   const pixelDataLength = pixelFound
     ? ((rawPixelLen === 0xFFFFFFFF || rawPixelLen === 0) ? (byteArray.length - pixelDataOffset) : rawPixelLen)
     : 0;
@@ -727,30 +758,9 @@ export function parseDicomBufferFast(
   let pixelRepresentation = getNumber('x00280103', '00280103', 0);
   let samplesPerPixel = getNumber('x00280002', '00280002', 1);
 
+  // Parse NumberOfFrames strictly according to DICOM standard (tag 0028,0008)
   const explicitFrames = getNumber('x00280008', '00280008', 1);
-  const bytesPerSingleFrame = rows * columns * Math.ceil(bitsAllocated / 8) * samplesPerPixel;
-  let numberOfFrames = explicitFrames;
-
-  if (pixelFound && numberOfFrames <= 1 && pixelDataLength && pixelDataLength !== 0xFFFFFFFF && bytesPerSingleFrame > 0 && pixelDataLength >= bytesPerSingleFrame * 2) {
-    numberOfFrames = Math.floor(pixelDataLength / bytesPerSingleFrame);
-  }
-
-  // If pixel data is encapsulated (0xFFFFFFFF), scan for Sequence Items (FFFE E000)
-  // ONLY if pixel data actually exists and it's not a Structured Report
-  if (!isStructuredReport && pixelFound && (rawPixelLen === 0xFFFFFFFF) && numberOfFrames <= 1) {
-    let itemCount = 0;
-    const startScan = pixelDataOffset !== undefined ? pixelDataOffset : 128;
-    for (let i = startScan; i < byteArray.length - 8; i++) {
-      if (byteArray[i] === 0xFE && byteArray[i + 1] === 0xFF && byteArray[i + 2] === 0x00 && byteArray[i + 3] === 0xE0) {
-        itemCount++;
-      }
-    }
-    if (itemCount > 1) {
-      numberOfFrames = itemCount - 1; // Exclude Basic Offset Table (BOT) item
-    } else if (itemCount === 1) {
-      numberOfFrames = 1;
-    }
-  }
+  let numberOfFrames = Math.max(1, explicitFrames);
 
   let customFramePixels: Uint8Array[] | undefined;
   if (isStructuredReport) {
@@ -1404,7 +1414,20 @@ export function groupInstancesIntoStudies(
     }
 
     const framesCount = inst.numberOfFrames || 1;
-    if (framesCount > 1) {
+    if (framesCount > 1 && inst.customFramePixels) {
+      for (let f = 0; f < framesCount; f++) {
+        const frameInst: DicomInstance = {
+          ...inst,
+          sopInstanceUid: `${inst.sopInstanceUid}_frame_${f + 1}`,
+          instanceNumber: f + 1,
+          frameIndex: f,
+          numberOfFrames: framesCount,
+          pixelData: undefined,
+          huData: undefined
+        };
+        studyEntry.seriesMap.get(seriesUid)!.instances.push(frameInst);
+      }
+    } else if (framesCount > 1 && framesCount <= 5000) {
       const bytesPerFrame = inst.rows * inst.columns * Math.ceil(inst.bitsAllocated / 8) * (inst.samplesPerPixel || 1);
       for (let f = 0; f < framesCount; f++) {
         const frameInst: DicomInstance = {
@@ -1440,10 +1463,27 @@ export function groupInstancesIntoStudies(
 
     for (const serData of sData.seriesMap.values()) {
       serData.instances.sort((a, b) => {
-        if (a.sliceLocation !== undefined && b.sliceLocation !== undefined && a.sliceLocation !== b.sliceLocation) {
+        // 1. Primary: Standard DICOM InstanceNumber (0020,0013) acquisition sequence (matches RadiAnt)
+        if (a.instanceNumber !== undefined && b.instanceNumber !== undefined && a.instanceNumber !== b.instanceNumber) {
+          return a.instanceNumber - b.instanceNumber;
+        }
+        // 2. Secondary fallback: sliceLocation if instance numbers are missing/identical
+        if (a.sliceLocation !== undefined && b.sliceLocation !== undefined && Math.abs(a.sliceLocation - b.sliceLocation) > 0.001) {
           return a.sliceLocation - b.sliceLocation;
         }
-        return a.instanceNumber - b.instanceNumber;
+        // 3. Tertiary fallback: physical 3D normal distance
+        if (a.imagePositionPatient && b.imagePositionPatient && a.imageOrientationPatient) {
+          const o = a.imageOrientationPatient;
+          const nx = o[1] * o[5] - o[2] * o[4];
+          const ny = o[2] * o[3] - o[0] * o[5];
+          const nz = o[0] * o[4] - o[1] * o[3];
+          const distA = a.imagePositionPatient[0] * nx + a.imagePositionPatient[1] * ny + a.imagePositionPatient[2] * nz;
+          const distB = b.imagePositionPatient[0] * nx + b.imagePositionPatient[1] * ny + b.imagePositionPatient[2] * nz;
+          if (Math.abs(distA - distB) > 0.001) {
+            return distA - distB;
+          }
+        }
+        return 0;
       });
 
       modalitiesSet.add(serData.modality);

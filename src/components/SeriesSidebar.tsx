@@ -12,7 +12,8 @@ import {
   Maximize2,
   FileSpreadsheet,
   Film,
-  CheckCircle2
+  CheckCircle2,
+  Compass
 } from 'lucide-react';
 import { DicomInstance, DicomSeries, DicomStudy, PacsDownloadState } from '../types/dicom';
 import { getOrDecodeInstancePixels } from '../services/dicomParser';
@@ -28,6 +29,10 @@ interface SeriesSidebarProps {
   onDragSeriesStart: (e: React.DragEvent, series: DicomSeries) => void;
   pacsDownloadState?: PacsDownloadState | null;
 }
+
+import { detectAnatomicalPlane } from '../services/mprEngine';
+export { detectAnatomicalPlane };
+
 
 // Live Rendered DICOM Thumbnail Component
 const SeriesThumbnailCanvas: React.FC<{ instance?: DicomInstance }> = ({ instance }) => {
@@ -95,8 +100,23 @@ const SeriesThumbnailCanvas: React.FC<{ instance?: DicomInstance }> = ({ instanc
 
       tempCtx.putImageData(imgData, 0, 0);
 
-      ctx.clearRect(0, 0, 120, 120);
-      ctx.drawImage(tempCanvas, 0, 0, 120, 120);
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, 120, 120);
+
+      const aspect = (width * (instance.pixelSpacing?.[1] || 1)) / (height * (instance.pixelSpacing?.[0] || 1));
+      let dw = 120;
+      let dh = 120;
+      if (aspect > 1) {
+        dh = 120 / aspect;
+      } else if (aspect > 0) {
+        dw = 120 * aspect;
+      }
+      const dx = (120 - dw) / 2;
+      const dy = (120 - dh) / 2;
+
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'medium';
+      ctx.drawImage(tempCanvas, dx, dy, dw, dh);
     } catch (err) {
       // Fallback
     }
@@ -105,7 +125,7 @@ const SeriesThumbnailCanvas: React.FC<{ instance?: DicomInstance }> = ({ instanc
   return (
     <canvas
       ref={canvasRef}
-      className="w-full h-full object-cover rounded bg-black transition-transform duration-200 group-hover:scale-105"
+      className="w-full h-full object-contain rounded bg-black transition-transform duration-200 group-hover:scale-105"
     />
   );
 };
@@ -126,19 +146,19 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
   const getModalityBadgeColor = (mod: string) => {
     switch (mod) {
       case 'CT':
-        return 'bg-amber-500/20 text-amber-300 border-amber-500/50';
+        return 'bg-amber-500/25 text-amber-300 border-amber-500/60';
       case 'MR':
-        return 'bg-cyan-500/20 text-cyan-300 border-cyan-500/50';
+        return 'bg-cyan-500/25 text-cyan-300 border-cyan-500/60';
       case 'DX':
       case 'CR':
-        return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50';
+        return 'bg-emerald-500/25 text-emerald-300 border-emerald-500/60';
       case 'US':
-        return 'bg-purple-500/20 text-purple-300 border-purple-500/50';
+        return 'bg-purple-500/25 text-purple-300 border-purple-500/60';
       case 'XA':
       case 'RF':
-        return 'bg-rose-500/20 text-rose-300 border-rose-500/50';
+        return 'bg-rose-500/25 text-rose-300 border-rose-500/60';
       default:
-        return 'bg-blue-500/20 text-blue-300 border-blue-500/50';
+        return 'bg-blue-500/25 text-blue-300 border-blue-500/60';
     }
   };
 
@@ -172,7 +192,7 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
     );
   }
 
-  const sidebarWidthClass = isExtraWide ? 'w-72' : 'w-56';
+  const sidebarWidthClass = isExtraWide ? 'w-80' : 'w-64';
 
   return (
     <aside className={`${sidebarWidthClass} bg-radiant-darkest border-r border-radiant-border flex flex-col h-full select-none text-xs text-slate-200 transition-all duration-150 shrink-0 z-10`}>
@@ -189,7 +209,7 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
         <div className="flex items-center gap-0.5">
           <button
             onClick={() => setIsExtraWide(!isExtraWide)}
-            title={isExtraWide ? 'Compact Sidebar Width' : 'Expand Sidebar Width'}
+            title={isExtraWide ? 'Standard Sidebar Width' : 'Expand Sidebar Width'}
             className="p-1 hover:bg-radiant-hover text-slate-400 hover:text-slate-200 rounded transition-colors text-[10px]"
           >
             <Maximize2 className="w-3.5 h-3.5" />
@@ -234,16 +254,16 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
             </div>
             <div className="flex items-center gap-1 text-[9.5px] text-slate-400 bg-black/40 px-1 py-0.2 rounded border border-slate-800 flex-shrink-0">
               {getSourceIcon(activeStudy.source)}
-              <span className="font-mono">{activeStudy.source.toUpperCase()}</span>
+              <span className="uppercase text-[9px] font-mono">{activeStudy.source}</span>
             </div>
           </div>
 
           <div className="text-[10px] text-slate-400 space-y-0.5">
             <div className="flex items-center justify-between">
-              <span>ID: <span className="font-mono text-slate-200 font-medium">{activeStudy.patientId}</span></span>
-              <span>{activeStudy.patientSex || 'O'} {activeStudy.patientAge ? `(${activeStudy.patientAge})` : ''}</span>
+              <span>ID: <span className="text-slate-300 font-mono">{activeStudy.patientId || 'N/A'}</span></span>
+              <span>{activeStudy.modalitiesInStudy.join(', ')}</span>
             </div>
-            <div className="text-amber-300/90 font-medium truncate">{activeStudy.studyDescription || 'Diagnostic Exam'}</div>
+
             <div className="flex items-center justify-between text-[9.5px] text-slate-500 pt-0.5 border-t border-slate-800/80">
               <span className="flex items-center gap-1">
                 <Calendar className="w-2.5 h-2.5 text-slate-400" />
@@ -256,11 +276,12 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
       ) : null}
 
       {/* Series Thumbnail Gallery List */}
-      <div className="flex-1 overflow-y-auto p-1.5 space-y-1.5">
+      <div className="flex-1 overflow-y-auto p-1.5 space-y-2">
         {activeStudy && activeStudy.series.length > 0 ? (
           activeStudy.series.map((ser) => {
             const isSelected = activeSeries?.seriesInstanceUid === ser.seriesInstanceUid;
             const repInstance = ser.instances[Math.floor(ser.instances.length / 2)] || ser.instances[0];
+            const plane = detectAnatomicalPlane(ser.seriesDescription, repInstance?.imageOrientationPatient);
 
             return (
               <div
@@ -268,13 +289,14 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
                 draggable
                 onDragStart={(e) => onDragSeriesStart(e, ser)}
                 onClick={() => onSelectSeries(ser)}
+                title={`${ser.seriesDescription || `Series ${ser.seriesNumber}`} (${ser.numberOfInstances} images)`}
                 className={`p-1.5 rounded-lg border transition-all cursor-pointer group select-none shadow-sm ${
                   isSelected
                     ? 'bg-gradient-to-r from-cyan-950/70 to-radiant-panel border-cyan-500 ring-1 ring-cyan-500/80 shadow-[0_0_10px_rgba(0,180,216,0.2)]'
                     : 'bg-radiant-panel/80 border-radiant-border hover:bg-radiant-card hover:border-slate-500'
                 }`}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex items-start gap-2">
                   {/* Real Rendered DICOM Preview Thumbnail */}
                   <div className="w-16 h-16 bg-black rounded border border-slate-700/80 relative overflow-hidden flex-shrink-0 shadow-inner group-hover:border-cyan-500/70 transition-colors">
                     <SeriesThumbnailCanvas instance={repInstance} />
@@ -286,24 +308,40 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
                       </span>
                     </div>
 
-                    {/* Bottom Series # & Count Badge */}
-                    <div className="absolute bottom-0.5 right-0.5 pointer-events-none bg-black/85 px-1 py-0 rounded text-[8.5px] font-mono text-cyan-300 border border-slate-800">
-                      #{ser.seriesNumber} • {ser.numberOfInstances}
+                    {/* RadiAnt-style Bold Slice Count Badge (Bottom-Right) */}
+                    <div className="absolute bottom-0.5 right-0.5 pointer-events-none bg-black/90 px-1 py-0.2 rounded text-[9px] font-mono font-bold text-cyan-300 border border-slate-800 shadow">
+                      {ser.numberOfInstances}
                     </div>
                   </div>
 
                   {/* Series Metadata & Parameters */}
-                  <div className="flex-1 min-w-0 flex flex-col justify-between py-0.2">
+                  <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2">
                     <div>
-                      <h4 className={`font-bold text-[11px] truncate transition-colors leading-tight ${
-                        isSelected ? 'text-cyan-300' : 'text-slate-100 group-hover:text-cyan-300'
-                      }`}>
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-800/80 px-1 rounded">
+                          #{ser.seriesNumber}
+                        </span>
+                        {plane && (
+                          <span className={`text-[8.5px] font-mono font-bold px-1 rounded border ${
+                            plane === 'CORONAL'
+                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/50'
+                              : plane === 'SAGITTAL'
+                              ? 'bg-amber-950/80 text-amber-300 border-amber-600/50'
+                              : 'bg-indigo-950/80 text-indigo-300 border-indigo-600/50'
+                          }`}>
+                            {plane === 'CORONAL' ? 'COR' : plane === 'SAGITTAL' ? 'SAG' : 'AX'}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Series Description - full readability without premature cutoff */}
+                      <h4
+                        className={`font-semibold text-[11px] leading-snug transition-colors line-clamp-2 ${
+                          isSelected ? 'text-cyan-300' : 'text-slate-200 group-hover:text-cyan-300'
+                        }`}
+                      >
                         {ser.seriesDescription || `Series ${ser.seriesNumber}`}
                       </h4>
-
-                      <p className="text-[10px] text-slate-400 truncate mt-0.5">
-                        {ser.protocolName || ser.bodyPartExamined || `${ser.modality} Scan`}
-                      </p>
                     </div>
 
                     <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/80 mt-1">
@@ -389,7 +427,7 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
           <FileSpreadsheet className="w-3 h-3 text-cyan-400" />
           <span>Studies: <strong className="text-slate-200">{studies.length}</strong></span>
         </span>
-        <span className="text-cyan-400 font-mono text-[9.5px]">Radiner</span>
+        <span className="text-cyan-400 font-mono text-[9.5px]">RadNode Viewer</span>
       </div>
     </aside>
   );

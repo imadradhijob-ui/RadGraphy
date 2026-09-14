@@ -12,6 +12,58 @@ interface ReportGeneratorModalProps {
   onOpenSettings?: () => void;
 }
 
+interface ReportTemplate {
+  id: string;
+  name: string;
+  history: string;
+  technique: string;
+  findings: string;
+  impression: string;
+}
+
+const REPORT_TEMPLATES: ReportTemplate[] = [
+  {
+    id: 'cxr_normal',
+    name: 'Normal Chest Radiograph (CXR)',
+    history: 'Evaluation for cough / fever / preoperative clearance.',
+    technique: 'Standard PA and lateral digital chest radiography.',
+    findings: 'The cardiothoracic silhouette is within normal limits.\nMediastinal and hilar contours are unremarkable.\nLungs are clear without focal consolidation, pneumothorax, or pleural effusion.\nVisualized osseous structures and soft tissues are intact.',
+    impression: 'No acute cardiopulmonary disease. Normal study.'
+  },
+  {
+    id: 'ct_brain_normal',
+    name: 'Normal Brain CT Scan',
+    history: 'Headache / Rule out acute intracranial hemorrhage / post-trauma.',
+    technique: 'Non-contrast axial CT scan of the brain with 2.5 mm reconstructions.',
+    findings: 'No acute intracranial hemorrhage, mass effect, or midline shift.\nVentricles, cortical sulci, and basal cisterns are age-appropriate.\nGray-white matter differentiation is preserved.\nVisualized calvarium and paranasal sinuses are unremarkable.',
+    impression: 'Normal non-contrast CT brain. No acute intracranial pathology.'
+  },
+  {
+    id: 'mri_spine_normal',
+    name: 'Normal Lumbar Spine MRI',
+    history: 'Low back pain without neurological deficit or radiculopathy.',
+    technique: 'Multiplanar T1, T2, and STIR weighted MR imaging of the lumbar spine.',
+    findings: 'Normal lumbar lordosis. Vertebral body heights and alignment are maintained.\nIntervertebral disc heights and signal intensities are preserved.\nNo focal disc herniation, spinal canal stenosis, or neural foraminal narrowing.\nConus medullaris terminates normally at L1 level.',
+    impression: 'Normal lumbar spine MRI. No evidence of significant disc herniation or spinal stenosis.'
+  },
+  {
+    id: 'ct_appendicitis',
+    name: 'Acute Appendicitis CT Finding',
+    history: 'Right lower quadrant abdominal pain, fever, leukocytosis.',
+    technique: 'Intravenous contrast-enhanced helical CT scan of the abdomen and pelvis.',
+    findings: 'The appendix is dilated measuring 11 mm in outer diameter with mucosal hyperenhancement and prominent surrounding periappendiceal mesenteric fat stranding.\nFaint calcified appendicolith noted at the appendiceal orifice.\nNo periappendiceal abscess collection or free extraluminal gas.',
+    impression: '1. CT findings consistent with acute uncomplicated appendicitis.\n2. Recommend surgical consultation.'
+  },
+  {
+    id: 'trauma_normal',
+    name: 'Trauma / Skeletal Radiograph (Normal)',
+    history: 'Post-traumatic evaluation following blunt mechanical trauma.',
+    technique: 'High-resolution digital radiography in orthogonal projections.',
+    findings: 'Cortical margins are smooth and continuous.\nNo discrete fracture line, cortical disruption, or joint dislocation identified.\nPeriarticular soft tissues are intact without swelling.',
+    impression: 'No acute fracture or dislocation identified.'
+  }
+];
+
 export const ReportGeneratorModal: React.FC<ReportGeneratorModalProps> = ({
   isOpen,
   onClose,
@@ -115,7 +167,8 @@ export const ReportGeneratorModal: React.FC<ReportGeneratorModalProps> = ({
             <div class="report-title">DIAGNOSTIC RADIOLOGY REPORT</div>
             <div style="font-size: 10.5px; text-align: right; color: #64748b; margin-top: 3px;">
               <div>Report Date: ${new Date().toLocaleDateString()}</div>
-              <div>Radiner Medical PACS</div>
+              <div>RadNode Viewer PACS</div>
+              <div style="font-size: 9px; color: #059669; font-weight: bold; margin-top: 2px;">POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL</div>
             </div>
           </div>
         </div>
@@ -287,6 +340,34 @@ export const ReportGeneratorModal: React.FC<ReportGeneratorModalProps> = ({
                   className="w-full bg-radiant-panel border border-radiant-border rounded px-2.5 py-1.5 text-slate-200 outline-none focus:border-cyan-500 font-mono"
                 />
               </div>
+            </div>
+          </div>
+
+          {/* Quick Pre-filled Medical Template Selector */}
+          <div className="bg-slate-900/70 border border-cyan-500/30 rounded-xl p-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5 shadow-sm">
+            <div className="flex items-center gap-2 text-cyan-300">
+              <Award className="w-4 h-4 text-amber-400" />
+              <span className="font-bold text-xs">Standard Diagnostic Templates:</span>
+            </div>
+            <div className="flex items-center gap-2 w-full sm:w-auto">
+              <select
+                onChange={(e) => {
+                  const tmpl = REPORT_TEMPLATES.find(t => t.id === e.target.value);
+                  if (tmpl) {
+                    setClinicalHistory(tmpl.history);
+                    setTechnique(tmpl.technique);
+                    setFindings(tmpl.findings);
+                    setImpression(tmpl.impression);
+                  }
+                }}
+                defaultValue=""
+                className="bg-radiant-darkest border border-cyan-600/50 rounded-lg px-3 py-1.5 text-xs text-slate-200 outline-none focus:border-cyan-400 font-medium cursor-pointer w-full sm:w-72"
+              >
+                <option value="" disabled>-- Select Rapid Medical Template --</option>
+                {REPORT_TEMPLATES.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
             </div>
           </div>
 

@@ -580,6 +580,46 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
           const badge = `Area: ${roi.areaCm2.toFixed(2)} cm²\nMean: ${roi.meanHu.toFixed(1)} HU\nStdDev: ${roi.stdDevHu.toFixed(1)}\n[Min: ${roi.minHu} | Max: ${roi.maxHu}]`;
           drawMultiLineBadge(ctx, badge, cx + rx + 5, cy, roi.histogram?.bins);
         }
+      } else if (m.type === 'arrow' && m.points.length >= 2) {
+        const p1 = imageToScreenCoord(m.points[0].x, m.points[0].y); // tail
+        const p2 = imageToScreenCoord(m.points[1].x, m.points[1].y); // target arrowhead
+
+        ctx.save();
+        ctx.strokeStyle = m.color || '#f59e0b';
+        ctx.fillStyle = m.color || '#f59e0b';
+        ctx.lineWidth = 2;
+
+        // Shaft
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+
+        // Arrowhead at p2
+        const headLen = 14;
+        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+        ctx.beginPath();
+        ctx.moveTo(p2.x, p2.y);
+        ctx.lineTo(
+          p2.x - headLen * Math.cos(angle - Math.PI / 6),
+          p2.y - headLen * Math.sin(angle - Math.PI / 6)
+        );
+        ctx.lineTo(
+          p2.x - headLen * Math.cos(angle + Math.PI / 6),
+          p2.y - headLen * Math.sin(angle + Math.PI / 6)
+        );
+        ctx.closePath();
+        ctx.fill();
+
+        // Tail anchor circle
+        ctx.beginPath();
+        ctx.arc(p1.x, p1.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Callout text badge
+        const labelText = m.arrowText || 'Target';
+        drawTextBadge(ctx, `🏷️ ${labelText}`, p1.x, p1.y - 12);
+        ctx.restore();
       } else if (m.type === 'hu_probe' && m.points.length >= 1) {
         const p = imageToScreenCoord(m.points[0].x, m.points[0].y);
         drawCrosshairMark(ctx, p.x, p.y);
@@ -689,7 +729,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     const imgCoord = screenToImageCoord(screenX, screenY);
 
     if (btn === 0) {
-      if (activeTool === 'distance' || activeTool === 'rectangle_roi' || activeTool === 'ellipse_roi') {
+      if (activeTool === 'distance' || activeTool === 'arrow' || activeTool === 'rectangle_roi' || activeTool === 'ellipse_roi') {
         setDrawingPoints([imgCoord]);
         setMousePos(imgCoord);
       } else if (activeTool === 'angle') {
@@ -827,16 +867,25 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     const imgCoord = screenToImageCoord(screenX, screenY);
 
     if (dragButton === 0) {
-      if ((activeTool === 'distance' || activeTool === 'rectangle_roi' || activeTool === 'ellipse_roi') && drawingPoints.length === 1) {
+      if ((activeTool === 'distance' || activeTool === 'arrow' || activeTool === 'rectangle_roi' || activeTool === 'ellipse_roi') && drawingPoints.length === 1) {
         const p1 = drawingPoints[0];
         const p2 = imgCoord;
 
         if (Math.abs(p1.x - p2.x) > 2 || Math.abs(p1.y - p2.y) > 2) {
+          let customLabel = 'Lesion';
+          if (activeTool === 'arrow') {
+            const promptVal = window.prompt('Enter lesion label or finding (e.g. Mass, Fracture, Nodule, Consolidation):', 'Lesion');
+            if (promptVal !== null && promptVal.trim()) {
+              customLabel = promptVal.trim();
+            }
+          }
+
           const measurement: Measurement = {
             id: `m_${Date.now()}`,
             instanceIndex,
             type: activeTool,
             points: [p1, p2],
+            arrowText: activeTool === 'arrow' ? customLabel : undefined,
             isFinished: true
           };
 
@@ -905,7 +954,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       <canvas ref={overlayCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
       {/* 3. RadiAnt HUD Corner Text Overlays */}
-      {currentInstance && (
+      {currentInstance && (viewportState.showOverlays ?? true) && (
         <>
           {/* Top-Left: Patient Metadata */}
           <div className="absolute top-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10">
@@ -933,9 +982,17 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
           </div>
 
           {/* Bottom-Left: Slice Position & Zoom */}
-          <div className="absolute bottom-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10">
-            <div className="radiant-overlay-yellow font-bold">
-              Im: {instanceIndex + 1} / {series?.instances?.length || 1}
+          <div className="absolute bottom-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10 pointer-events-none">
+            {/* Prominent High-Visibility Slide / Slice Number Badge */}
+            <div className="flex items-center gap-1.5 mb-1">
+              <span className="px-2 py-0.5 rounded bg-black/85 border border-amber-400 text-amber-300 font-mono font-bold text-xs shadow-lg backdrop-blur-sm">
+                Slice: {instanceIndex + 1} / {totalInstances}
+              </span>
+              {currentInstance.instanceNumber !== undefined && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-900/85 border border-slate-700 text-slate-300 font-mono text-[10px]">
+                  #{currentInstance.instanceNumber}
+                </span>
+              )}
             </div>
             <div>
               Loc: {currentInstance.sliceLocation !== undefined ? `${currentInstance.sliceLocation.toFixed(1)} mm` : '-'}
@@ -963,6 +1020,15 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             </div>
           </div>
         </>
+      )}
+
+      {/* Fallback permanent Slide Number Badge even when full HUD overlays are toggled off */}
+      {currentInstance && !(viewportState.showOverlays ?? true) && (
+        <div className="absolute bottom-2.5 left-3 z-10 pointer-events-none">
+          <span className="px-2 py-0.5 rounded bg-black/85 border border-amber-400 text-amber-300 font-mono font-bold text-xs shadow-lg backdrop-blur-sm">
+            Slice: {instanceIndex + 1} / {totalInstances}
+          </span>
+        </div>
       )}
 
       {/* 4. Medical Vertical Slice Scrollbar */}

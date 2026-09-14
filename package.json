@@ -1,9 +1,9 @@
 {
-  "name": "radiner",
+  "name": "radnode-viewer",
   "private": true,
-  "version": "0.0.5",
-  "description": "Radiner Version 0.0.5",
-  "author": "Radiner Medical",
+  "version": "0.0.6",
+  "description": "RadNode Viewer Version 0.0.6 - POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL",
+  "author": "IT Department - Al-Shaab Hospital",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -16,9 +16,9 @@
     "dist": "npm run build && electron-builder --win nsis"
   },
   "build": {
-    "appId": "com.radiner.medical.workstation",
-    "productName": "Radiner",
-    "copyright": "Copyright © 2026 Radiner Medical Platform",
+    "appId": "com.alshaab.radnode.viewer",
+    "productName": "RadNode Viewer",
+    "copyright": "Copyright © 2026 IT Department - Al-Shaab Hospital. All rights reserved.",
     "asar": true,
     "directories": {
       "output": "dist_installer",
@@ -38,11 +38,11 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Radiner",
-      "artifactName": "Radiner Setup 0.0.5.${ext}",
+      "shortcutName": "RadNode Viewer",
+      "artifactName": "RadNode Viewer Setup 0.0.6.${ext}",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
-      "uninstallDisplayName": "Radiner"
+      "uninstallDisplayName": "RadNode Viewer"
     }
   },
   "dependencies": {

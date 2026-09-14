@@ -16,6 +16,9 @@ import {
   FlipHorizontal,
   FlipVertical,
   Eye,
+  EyeOff,
+  HelpCircle,
+  ArrowUpRight,
   Grid,
   Palette,
   Sparkles,
@@ -56,6 +59,7 @@ interface ToolbarProps {
   onSetMip: (mode: MipMode, slab: number) => void;
   isMprActive: boolean;
   onToggleMpr: () => void;
+  onOpenMprLayout?: (layout: '2x2' | '3-view' | 'coronal-only' | 'axial-only' | 'sagittal-only') => void;
   onOpen3D?: () => void;
   isCinePlaying: boolean;
   onToggleCine: () => void;
@@ -69,6 +73,9 @@ interface ToolbarProps {
   bookmarksCount?: number;
   onOpenBookmarks?: () => void;
   onOpenReport?: () => void;
+  showOverlays?: boolean;
+  onToggleOverlays?: () => void;
+  onOpenShortcuts?: () => void;
 }
 
 export const Toolbar: React.FC<ToolbarProps> = ({
@@ -91,6 +98,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onSetMip,
   isMprActive,
   onToggleMpr,
+  onOpenMprLayout,
   onOpen3D,
   isCinePlaying,
   onToggleCine,
@@ -103,7 +111,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onOpenExport,
   bookmarksCount = 0,
   onOpenBookmarks,
-  onOpenReport
+  onOpenReport,
+  showOverlays = true,
+  onToggleOverlays,
+  onOpenShortcuts
 }) => {
   const toolbarRef = useRef<HTMLDivElement>(null);
 
@@ -116,6 +127,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   const [showRoiMenu, setShowRoiMenu] = useState(false);
   const [showAngleMenu, setShowAngleMenu] = useState(false);
   const [showOrientMenu, setShowOrientMenu] = useState(false);
+  const [showMprMenu, setShowMprMenu] = useState(false);
 
   // Clean document mousedown listener to dismiss dropdowns
   useEffect(() => {
@@ -130,6 +142,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         setShowRoiMenu(false);
         setShowAngleMenu(false);
         setShowOrientMenu(false);
+        setShowMprMenu(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -140,14 +153,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   const isAngleActive = activeTool === 'angle' || activeTool === 'cobb_angle';
 
   const toolBtnClass = (tool: ToolType) =>
-    `flex flex-col items-center justify-center min-w-[42px] px-2 h-11 rounded transition-all select-none text-[10px] gap-0.5 ${
+    `flex flex-col items-center justify-center min-w-[44px] px-2 h-11 rounded-lg transition-all select-none text-[10px] gap-0.5 relative group ${
       activeTool === tool
-        ? 'bg-cyan-600/30 text-cyan-300 border border-cyan-400/80 shadow-[0_0_8px_rgba(0,180,216,0.3)] font-bold'
-        : 'hover:bg-radiant-hover text-slate-300 border border-transparent'
+        ? 'bg-gradient-to-b from-cyan-950/90 to-cyan-900/50 text-cyan-200 border border-cyan-400 shadow-[0_0_12px_rgba(6,182,212,0.4)] font-bold ring-1 ring-cyan-400/40'
+        : 'hover:bg-slate-800/80 hover:text-slate-100 text-slate-300 border border-transparent'
     }`;
 
   const actionBtnClass =
-    'flex flex-col items-center justify-center min-w-[38px] px-1.5 h-11 rounded transition-all select-none text-[10px] gap-0.5 hover:bg-radiant-hover text-slate-300 border border-transparent';
+    'flex flex-col items-center justify-center min-w-[38px] px-1.5 h-11 rounded-lg transition-all select-none text-[10px] gap-0.5 hover:bg-slate-800/80 text-slate-300 border border-transparent';
 
   // Helper for ROI Trigger Label & Icon
   const getRoiTriggerContent = () => {
@@ -169,9 +182,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       return { icon: <Activity className="w-3.5 h-3.5 text-amber-400" />, label: 'Cobb Ang' };
     }
     if (activeTool === 'angle') {
-      return { icon: <Compass className="w-3.5 h-3.5 text-emerald-400" />, label: 'Angle' };
+      return { icon: <Compass className="w-3.5 h-3.5 text-cyan-400" />, label: '3-Pt Ang' };
     }
-    return { icon: <Compass className="w-3.5 h-3.5 text-emerald-400" />, label: 'Angles' };
+    return { icon: <Compass className="w-3.5 h-3.5 text-cyan-400" />, label: 'Angles' };
   };
 
   const roiTrigger = getRoiTriggerContent();
@@ -180,11 +193,11 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   return (
     <div
       ref={toolbarRef}
-      className="h-14 bg-radiant-panel border-b border-radiant-border flex items-center px-2 gap-1 relative z-30 select-none shrink-0 overflow-visible justify-between"
+      className="h-14 bg-gradient-to-r from-slate-950 via-radiant-panel to-slate-950 border-b border-radiant-border flex items-center px-2 gap-1.5 relative z-30 select-none shrink-0 overflow-visible justify-between shadow-md"
     >
-      <div className="flex items-center gap-1 overflow-visible">
+      <div className="flex items-center gap-1.5 overflow-visible">
         {/* 1. Primary Navigation Tools (Windowing, Pan, Zoom, Loupe) */}
-        <div className="flex items-center gap-0.5 pr-1.5 border-r border-radiant-border shrink-0">
+        <div className="flex items-center gap-0.5 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm shrink-0">
           <button
             onClick={() => onSelectTool('ww_wl')}
             title="Window Center / Width [W]"
@@ -223,7 +236,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </div>
 
         {/* 2. Measurements & Clinical Tools Hub */}
-        <div className="flex items-center gap-0.5 px-1.5 border-r border-radiant-border shrink-0">
+        <div className="flex items-center gap-0.5 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm shrink-0">
           {/* Calibrated Length Caliper */}
           <button
             onClick={() => onSelectTool('distance')}
@@ -232,6 +245,16 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           >
             <Ruler className="w-4 h-4 text-sky-400" />
             <span>Length</span>
+          </button>
+
+          {/* Arrow & Text Lesion Annotation */}
+          <button
+            onClick={() => onSelectTool('arrow')}
+            title="Arrow & Text Lesion Annotation [T]"
+            className={toolBtnClass('arrow')}
+          >
+            <ArrowUpRight className="w-4 h-4 text-amber-400" />
+            <span>Arrow</span>
           </button>
 
           {/* Cardiothoracic Ratio (CTR) Caliper */}
@@ -423,8 +446,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           </button>
         </div>
 
-        {/* 3. Orientation & Transformations (Rotate, Flip, Invert) */}
-        <div className="flex items-center gap-0.5 px-1.5 border-r border-radiant-border shrink-0">
+        {/* 3. Orientation & Transformation Tools */}
+        <div className="flex items-center gap-0.5 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm shrink-0">
           <div className="relative">
             <button
               onClick={() => {
@@ -507,10 +530,37 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               </div>
             )}
           </div>
+
+          {/* Quick HUD Toggle & Shortcuts */}
+          {onToggleOverlays && (
+            <button
+              onClick={onToggleOverlays}
+              title={showOverlays ? 'Hide Medical HUD Text Overlays (O)' : 'Show Medical HUD Text Overlays (O)'}
+              className={`flex flex-col items-center justify-center min-w-[44px] px-1 h-11 rounded transition-all text-[10px] gap-0.5 border ${
+                showOverlays
+                  ? 'bg-cyan-950/40 text-cyan-300 border-cyan-500/40'
+                  : 'text-slate-400 border-transparent hover:bg-radiant-hover hover:text-slate-200'
+              }`}
+            >
+              {showOverlays ? <Eye className="w-4 h-4 text-cyan-400" /> : <EyeOff className="w-4 h-4 text-slate-400" />}
+              <span>{showOverlays ? 'HUD' : 'Clean'}</span>
+            </button>
+          )}
+
+          {onOpenShortcuts && (
+            <button
+              onClick={onOpenShortcuts}
+              title="Workstation Keyboard Shortcuts Guide (?)"
+              className="flex flex-col items-center justify-center min-w-[44px] px-1 h-11 rounded transition-all text-[10px] gap-0.5 border border-transparent hover:bg-radiant-hover text-slate-300 hover:text-cyan-300"
+            >
+              <HelpCircle className="w-4 h-4 text-slate-400 hover:text-cyan-400" />
+              <span>Keys</span>
+            </button>
+          )}
         </div>
 
         {/* 4. Dropdowns: Presets, Filters, LUT, MIP */}
-        <div className="flex items-center gap-1 px-1.5 border-r border-radiant-border shrink-0">
+        <div className="flex items-center gap-1 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm shrink-0">
           {/* Window Presets Dropdown */}
           <div className="relative">
             <button
@@ -776,7 +826,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </div>
 
         {/* 5. Sync & Cine Controls */}
-        <div className="flex items-center gap-1 px-1.5 border-r border-radiant-border shrink-0">
+        <div className="flex items-center gap-1 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm shrink-0">
           {/* Sync */}
           <div className="relative">
             <button
@@ -852,7 +902,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </div>
 
         {/* 6. Layout & 3D Tools */}
-        <div className="flex items-center gap-1 px-1.5 border-r border-radiant-border shrink-0">
+        <div className="flex items-center gap-1 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm shrink-0">
           {/* Grid Dropdown */}
           <div className="relative">
             <button
@@ -905,19 +955,145 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             )}
           </div>
 
-          {/* MPR */}
-          <button
-            onClick={onToggleMpr}
-            title="Multi-Planar Reconstruction (Axial, Coronal, Sagittal)"
-            className={`flex items-center gap-1 px-2 h-9 rounded text-[11px] font-medium transition-all ${
-              isMprActive
-                ? 'bg-cyan-600/40 border border-cyan-400 text-cyan-200 font-bold'
-                : 'bg-radiant-darkest hover:bg-radiant-hover text-slate-200 border border-radiant-border'
-            }`}
-          >
-            <Layers className="w-3.5 h-3.5 text-cyan-400" />
-            <span>MPR</span>
-          </button>
+          {/* MPR Dropdown Menu */}
+          <div className="relative">
+            <button
+              onClick={() => {
+                setShowMprMenu(!showMprMenu);
+                setShowGridMenu(false);
+                setShowPresetMenu(false);
+                setShowLutMenu(false);
+                setShowMipMenu(false);
+                setShowFilterMenu(false);
+                setShowSyncMenu(false);
+                setShowRoiMenu(false);
+                setShowAngleMenu(false);
+                setShowOrientMenu(false);
+              }}
+              title="Multi-Planar Reconstruction (MPR)"
+              className={`flex items-center gap-1.5 px-2.5 h-9 rounded text-[11px] font-semibold transition-all ${
+                isMprActive
+                  ? 'bg-cyan-600/40 border border-cyan-400 text-cyan-200 font-bold shadow-[0_0_10px_rgba(6,182,212,0.3)]'
+                  : 'bg-radiant-darkest hover:bg-radiant-hover text-slate-200 border border-radiant-border'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-cyan-400" />
+              <span>MPR</span>
+              <ChevronDown className={`w-2.5 h-2.5 text-slate-400 transition-transform ${showMprMenu ? 'rotate-180 text-cyan-300' : ''}`} />
+            </button>
+
+            {showMprMenu && (
+              <div
+                onMouseDown={(e) => e.stopPropagation()}
+                className="absolute left-0 top-full mt-1.5 w-60 bg-radiant-panel border border-radiant-border rounded-xl shadow-2xl p-1.5 z-50 text-xs flex flex-col gap-1"
+              >
+                <div className="text-[10px] font-bold text-slate-400 px-2 py-0.5 uppercase tracking-wider flex items-center justify-between">
+                  <span>MPR Reconstruction</span>
+                  {isMprActive && (
+                    <button
+                      onClick={() => {
+                        onToggleMpr();
+                        setShowMprMenu(false);
+                      }}
+                      className="text-[10px] text-rose-400 hover:text-rose-300 font-semibold lowercase"
+                    >
+                      close mpr
+                    </button>
+                  )}
+                </div>
+
+                {/* 3D MPR Item with 2x2 and 1x3 options */}
+                <div className="bg-radiant-darkest/70 border border-radiant-border/60 rounded-lg p-1.5 flex flex-col gap-1">
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => {
+                        if (onOpenMprLayout) onOpenMprLayout('2x2');
+                        else onToggleMpr();
+                        setShowMprMenu(false);
+                      }}
+                      className="flex items-center gap-2 text-left font-bold text-cyan-300 hover:text-cyan-200 transition-colors"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>3D MPR</span>
+                    </button>
+                    <div className="flex items-center gap-1 bg-black/50 p-0.5 rounded border border-slate-700/60 text-[10px]">
+                      <button
+                        onClick={() => {
+                          if (onOpenMprLayout) onOpenMprLayout('2x2');
+                          else onToggleMpr();
+                          setShowMprMenu(false);
+                        }}
+                        title="2*2: عرض الشكل الثلاثي الأبعاد مع ثلاث مساقط"
+                        className="px-2 py-0.5 rounded font-mono font-semibold bg-cyan-600/30 hover:bg-cyan-600 text-cyan-200 hover:text-white transition-colors"
+                      >
+                        2×2 (3D)
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (onOpenMprLayout) onOpenMprLayout('3-view');
+                          else onToggleMpr();
+                          setShowMprMenu(false);
+                        }}
+                        title="1*3: عرض ثلاث متسلسلات فقط"
+                        className="px-2 py-0.5 rounded font-mono font-semibold bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors"
+                      >
+                        1×3
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-[10px] text-slate-400 px-1">
+                    2×2 with 3D Volume or 1×3 Tri-View (3 Series)
+                  </div>
+                </div>
+
+                {/* Single Plane Views */}
+                <button
+                  onClick={() => {
+                    if (onOpenMprLayout) onOpenMprLayout('coronal-only');
+                    else onToggleMpr();
+                    setShowMprMenu(false);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-radiant-hover rounded-lg flex items-center justify-between text-slate-200 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-amber-400" />
+                    <span className="font-semibold">Coronal</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">Frontal</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onOpenMprLayout) onOpenMprLayout('axial-only');
+                    else onToggleMpr();
+                    setShowMprMenu(false);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-radiant-hover rounded-lg flex items-center justify-between text-slate-200 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-sky-400" />
+                    <span className="font-semibold">Axial</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">Transverse</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (onOpenMprLayout) onOpenMprLayout('sagittal-only');
+                    else onToggleMpr();
+                    setShowMprMenu(false);
+                  }}
+                  className="w-full text-left px-2.5 py-1.5 hover:bg-radiant-hover rounded-lg flex items-center justify-between text-slate-200 transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    <span className="font-semibold">Sagittal</span>
+                  </div>
+                  <span className="text-[10px] text-slate-400 font-mono">Lateral</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* 3D VR */}
           {onOpen3D && (
@@ -934,7 +1110,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       </div>
 
       {/* 7. Action Hub (Right: Key Slices, Report, PACS, CD, Export) */}
-      <div className="flex items-center gap-1 pl-1 ml-auto shrink-0">
+      <div className="flex items-center gap-1 bg-slate-900/60 p-0.5 rounded-xl border border-slate-800/90 shadow-sm pl-1 ml-auto shrink-0">
         {onOpenBookmarks && (
           <button
             onClick={onOpenBookmarks}
