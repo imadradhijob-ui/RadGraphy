@@ -34,7 +34,7 @@ import {
   PacsSearchResult
 } from './types/dicom';
 import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './services/dicomParser';
-import { detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice } from './services/mprEngine';
+import { detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice, isEligibleForMpr } from './services/mprEngine';
 import { PacsService } from './services/pacsClient';
 import { Loader2 } from 'lucide-react';
 
@@ -246,6 +246,11 @@ export const App: React.FC = () => {
 
   const handleSelectSeries = (series: DicomSeries) => {
     setActiveSeriesUid(series.seriesInstanceUid);
+    // If user selects an SR (Structured Report), scout, or non-volumetric series while in MPR,
+    // smoothly switch to 2D view so the report / image is displayed properly
+    if (isMprActive && !isEligibleForMpr(series)) {
+      setIsMprActive(false);
+    }
     const firstInst = series.instances[0];
     const isCt = series.modality === 'CT' || (firstInst?.rescaleIntercept !== undefined && firstInst.rescaleIntercept < -100);
     const defWc = isCt ? 40 : 128;
@@ -551,11 +556,15 @@ export const App: React.FC = () => {
     const currentStudy = activeStudy || studies[0] || null;
     if (currentStudy && currentStudy.series.length > 0) {
       if (layout === '2x2' || layout === '3-view') {
-        // Multi-view (2x2 or 1x3): ALWAYS automatically select the main volumetric series (Axial CT with most slices)
-        // regardless of whether any series was previously clicked or active!
-        const mainVol = findMainVolumetricSeries(currentStudy);
-        if (mainVol) {
-          handleSelectSeries(mainVol);
+        // Multi-view (2x2 or 1x3): Respect the user's currently active series if valid and eligible!
+        // Strictly exclude SR (Structured Reports) and scouts/topograms.
+        const currentSeries = currentStudy.series.find(s => s.seriesInstanceUid === currentViewport?.seriesUid) || activeSeries;
+        let targetSeries = currentSeries;
+        if (!targetSeries || !isEligibleForMpr(targetSeries)) {
+          targetSeries = findMainVolumetricSeries(currentStudy);
+        }
+        if (targetSeries) {
+          handleSelectSeries(targetSeries);
         }
         setMprInitialLayout(layout);
         setIsMprActive(true);
@@ -565,9 +574,9 @@ export const App: React.FC = () => {
           layout === 'coronal-only' ? 'CORONAL' :
           layout === 'axial-only' ? 'AXIAL' : 'SAGITTAL';
 
-        // Check if there is a real native multi-slice series for this plane (strictly NOT a topogram or single-slice)
+        // Check if there is a real native multi-slice series for this plane (strictly NOT a topogram or SR)
         const matchingMultiSliceSeries = currentStudy.series.find((s) => {
-          if (isTopogramOrSingleSlice(s) || s.instances.length < 2) return false;
+          if (!isEligibleForMpr(s)) return false;
           const rep = s.instances[Math.floor(s.instances.length / 2)] || s.instances[0];
           return detectAnatomicalPlane(s.seriesDescription, rep?.imageOrientationPatient) === targetPlane;
         });
@@ -581,7 +590,7 @@ export const App: React.FC = () => {
           }
         } else {
           // If no separate multi-slice series exists, pick the main volumetric series (Axial CT)
-          // to reconstruct this plane in MPR! NEVER pick a topogram!
+          // to reconstruct this plane in MPR! NEVER pick a topogram or SR!
           const mainVol = findMainVolumetricSeries(currentStudy);
           if (mainVol) {
             handleSelectSeries(mainVol);
@@ -593,28 +602,15 @@ export const App: React.FC = () => {
     }
   };
 
-  // Auto-Enforce Fullscreen Mode on start & first user interaction
+  // Track Fullscreen Mode changes
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
     document.addEventListener('fullscreenchange', handleFullscreenChange);
 
-    const tryAutoFullscreen = () => {
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      }
-    };
-
-    // Try immediately and on user click/interaction
-    tryAutoFullscreen();
-    window.addEventListener('click', tryAutoFullscreen, { once: true });
-    window.addEventListener('keydown', tryAutoFullscreen, { once: true });
-
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange);
-      window.removeEventListener('click', tryAutoFullscreen);
-      window.removeEventListener('keydown', tryAutoFullscreen);
     };
   }, []);
 
@@ -716,8 +712,6 @@ export const App: React.FC = () => {
         isFullscreen={isFullscreen}
         onToggleFullscreen={handleToggleFullscreen}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
-        onMinimize={handleMinimize}
-        onExit={handleExit}
       />
 
       {/* 2. Menu Bar */}

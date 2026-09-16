@@ -27,6 +27,11 @@ export interface DicomInstance {
   sliceLocation?: number;
   imagePositionPatient?: [number, number, number];
   imageOrientationPatient?: [number, number, number, number, number, number];
+  echoNumber?: number;
+  acquisitionNumber?: number;
+  imageType?: string;
+  echoTime?: number;
+  spacingBetweenSlices?: number;
   seriesInstanceUid: string;
   studyInstanceUid: string;
   rawTags: Record<string, DicomTag>;

@@ -21,8 +21,9 @@ function createWindow() {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
+    center: true,
     backgroundColor: '#0B0F17',
-    title: 'RadNode Viewer Version 0.0.6',
+    title: 'RadNode Viewer Version 0.0.7',
     icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -35,7 +36,6 @@ function createWindow() {
   mainWindow.setMenu(null);
   mainWindow.setAutoHideMenuBar(true);
   mainWindow.setMenuBarVisibility(false);
-  mainWindow.maximize();
 
   const isDev = process.env.NODE_ENV === 'development' || (!app.isPackaged && !process.env.IS_PACKAGED);
 

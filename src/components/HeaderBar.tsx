@@ -6,15 +6,12 @@ import {
   HardDrive,
   Maximize,
   Minimize,
-  Minus,
   RefreshCw,
   Server,
   Settings,
   Tag,
   Download,
-  FileText,
-  X,
-  Power
+  FileText
 } from 'lucide-react';
 import { DicomStudy } from '../types/dicom';
 
@@ -29,8 +26,6 @@ interface HeaderBarProps {
   isFullscreen: boolean;
   onToggleFullscreen: () => void;
   onOpenSettings?: () => void;
-  onMinimize?: () => void;
-  onExit?: () => void;
 }
 
 export const HeaderBar: React.FC<HeaderBarProps> = ({
@@ -43,9 +38,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenFolderClick,
   isFullscreen,
   onToggleFullscreen,
-  onOpenSettings,
-  onMinimize,
-  onExit
+  onOpenSettings
 }) => {
   return (
     <header className="h-11 bg-radiant-darkest border-b border-radiant-border flex items-center justify-between px-3 select-none text-xs text-slate-200">
@@ -58,83 +51,83 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               alt="RadNode Viewer"
               className="w-full h-full object-contain"
               onError={(e) => {
-                const img = e.currentTarget;
-                if (img.src.endsWith('./icon.png')) {
-                  img.src = '/icon.png';
-                } else {
-                  img.src = './logo.png';
-                }
+                (e.target as HTMLElement).style.display = 'none';
               }}
             />
           </div>
-          <span className="bg-gradient-to-r from-white via-cyan-100 to-cyan-300 bg-clip-text text-transparent font-extrabold tracking-wider">
-            RadNode Viewer
+          <span className="font-extrabold tracking-wider bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-300 bg-clip-text text-transparent">
+            RadNode
           </span>
-          <span className="text-[10px] font-mono bg-cyan-950/90 text-cyan-300 px-1.5 py-0.2 rounded border border-cyan-400/50 shadow-sm">
-            v0.0.6
+          <span className="text-[10px] text-cyan-400/70 font-mono tracking-widest border-l border-slate-700/60 pl-2 uppercase font-medium">
+            Viewer
           </span>
         </div>
 
-        {/* Hospital IT Department Powered Badge */}
-        <div className="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-gradient-to-r from-emerald-950/60 via-slate-900 to-cyan-950/60 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] tracking-wider shadow-sm select-none">
-          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-          <span className="truncate">POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL</span>
-        </div>
-
-        {/* Current Active Study Info Badge */}
+        {/* Study Metadata Header Banner */}
         {activeStudy ? (
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1 bg-slate-900/80 rounded-xl border border-cyan-500/30 text-slate-300 shadow-sm backdrop-blur-sm">
-            <span className="font-bold text-cyan-300 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              <span>{activeStudy.patientName.replace(/\^/g, ' ')}</span>
+          <div className="flex items-center gap-2 text-slate-300 bg-radiant-panel px-3 py-1 rounded border border-radiant-border">
+            <span className="font-bold text-white tracking-wide">
+              {activeStudy.patientName || 'Anonymous'}
             </span>
-            <span className="text-slate-600">|</span>
-            <span className="font-mono text-slate-400 text-[11px]">ID: {activeStudy.patientId}</span>
-            <span className="text-slate-600">|</span>
-            <span className="text-amber-300 font-medium truncate max-w-[220px]">{activeStudy.studyDescription}</span>
-            <span className="px-2 py-0.5 bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 rounded-md text-[10px] font-bold font-mono">
-              {activeStudy.modalitiesInStudy.join(', ')}
+            <span className="text-slate-500">•</span>
+            <span className="text-slate-400 font-mono">
+              ID: {activeStudy.patientId || 'NO_ID'}
             </span>
+            {activeStudy.studyDescription && (
+              <>
+                <span className="text-slate-500">•</span>
+                <span className="text-cyan-400 truncate max-w-[200px]" title={activeStudy.studyDescription}>
+                  {activeStudy.studyDescription}
+                </span>
+              </>
+            )}
+            {activeStudy.modalitiesInStudy && activeStudy.modalitiesInStudy.length > 0 && (
+              <span className="px-1.5 py-0.5 bg-cyan-950/80 text-cyan-400 border border-cyan-700/50 rounded text-[10px] font-bold">
+                {activeStudy.modalitiesInStudy.join('/')}
+              </span>
+            )}
           </div>
         ) : (
-          <div className="hidden md:flex text-slate-500 text-xs items-center gap-1.5">
-            <span>No study currently open</span>
+          <div className="flex items-center gap-2 text-slate-500 italic bg-radiant-panel/50 px-2.5 py-1 rounded border border-radiant-border/40 text-[11px]">
+            <Activity className="w-3.5 h-3.5 text-slate-600 animate-pulse" />
+            <span>Ready • Load DICOM files or query PACS archive</span>
           </div>
         )}
       </div>
 
-      {/* Quick Action & Window Controls */}
+      {/* Quick Access Action Buttons */}
       <div className="flex items-center gap-1.5">
-        {/* Open Files / Folder */}
+        {/* Open Files */}
         <button
           onClick={onOpenFileClick}
-          title="Open DICOM Files (Ctrl+O)"
-          className="flex items-center gap-1.5 px-2.5 py-1 bg-radiant-panel hover:bg-radiant-hover text-slate-200 rounded border border-radiant-border transition-colors font-medium"
+          title="Open DICOM Files from Local Computer"
+          className="flex items-center gap-1.5 px-2.5 py-1 bg-cyan-950/60 hover:bg-cyan-900/80 text-cyan-300 rounded border border-cyan-700/60 transition-colors font-medium shadow-sm"
         >
-          <FileText className="w-3.5 h-3.5 text-cyan-400" />
+          <FolderOpen className="w-3.5 h-3.5 text-cyan-400" />
           <span>Open File</span>
         </button>
 
+        {/* Open Folder */}
         <button
           onClick={onOpenFolderClick}
-          title="Open Folder / USB Flash Drive (Ctrl+Shift+O)"
-          className="flex items-center gap-1.5 px-2.5 py-1 bg-radiant-panel hover:bg-radiant-hover text-slate-200 rounded border border-radiant-border transition-colors font-medium"
+          title="Open Folder Containing DICOM Series"
+          className="flex items-center gap-1.5 px-2.5 py-1 bg-radiant-panel hover:bg-radiant-hover text-slate-200 rounded border border-radiant-border transition-colors"
         >
-          <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
+          <HardDrive className="w-3.5 h-3.5 text-emerald-400" />
           <span>Open Folder</span>
         </button>
 
-        {/* PACS Query Modal */}
+        {/* PACS Query/Retrieve */}
         <button
           onClick={onOpenPacs}
-          title="Query PACS Server (C-FIND / C-MOVE / DICOMweb)"
+          title="Query PACS Cloud / Hospital Archive"
           className="flex items-center gap-1.5 px-2.5 py-1 bg-radiant-panel hover:bg-radiant-hover text-slate-200 rounded border border-radiant-border transition-colors"
         >
           <Server className="w-3.5 h-3.5 text-cyan-400" />
-          <span>PACS Query</span>
+          <span>PACS</span>
         </button>
 
-        {/* CD/DVD DICOMDIR */}
+        {/* DICOMDIR CD/DVD Media */}
         <button
           onClick={onOpenDicomDir}
           title="Open CD/DVD DICOMDIR Media"
@@ -173,36 +166,14 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </button>
         )}
 
-        {/* Top-Right Window Controls Hub (Minimize, Fullscreen, Exit) */}
-        <div className="flex items-center gap-1 pl-1.5 ml-1 border-l border-radiant-border">
-          {/* Minimize Button */}
-          <button
-            onClick={onMinimize}
-            title="Minimize Workstation Window"
-            className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-amber-300 rounded border border-radiant-border transition-colors"
-          >
-            <Minus className="w-3.5 h-3.5" />
-          </button>
-
-          {/* Fullscreen / Maximize Toggle */}
-          <button
-            onClick={onToggleFullscreen}
-            title={isFullscreen ? 'Exit Fullscreen (F11)' : 'Always Fullscreen (F11)'}
-            className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border transition-colors"
-          >
-            {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
-          </button>
-
-          {/* Exit / Close Application Button */}
-          <button
-            onClick={onExit}
-            title="Exit / Close RadNode Viewer"
-            className="flex items-center gap-1 px-2.5 py-1 bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white rounded border border-rose-700/60 transition-all font-semibold text-xs shadow-sm"
-          >
-            <X className="w-3.5 h-3.5" />
-            <span>Exit</span>
-          </button>
-        </div>
+        {/* Fullscreen Toggle */}
+        <button
+          onClick={onToggleFullscreen}
+          title={isFullscreen ? 'Exit Fullscreen (F11)' : 'Fullscreen (F11)'}
+          className="p-1.5 bg-radiant-panel hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border transition-colors ml-0.5"
+        >
+          {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+        </button>
       </div>
     </header>
   );

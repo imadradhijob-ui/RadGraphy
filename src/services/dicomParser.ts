@@ -651,9 +651,12 @@ export function parseDicomBufferFast(
         if (val !== undefined && val !== null) return val;
       } catch {}
     }
-    if (dcmjsDict && dcmjsKey && dcmjsDict[dcmjsKey]?.Value?.[0]) {
-      const v = dcmjsDict[dcmjsKey].Value[0];
-      return typeof v === 'object' && v.Alphabetic ? v.Alphabetic : String(v);
+    if (dcmjsDict && dcmjsKey && dcmjsDict[dcmjsKey]?.Value) {
+      const v = dcmjsDict[dcmjsKey].Value;
+      if (Array.isArray(v)) {
+        return v.map((x: any) => (typeof x === 'object' && x?.Alphabetic ? x.Alphabetic : String(x))).join('\\');
+      }
+      return typeof v === 'object' && (v as any)?.Alphabetic ? (v as any).Alphabetic : String(v);
     }
     return def;
   };
@@ -830,6 +833,11 @@ export function parseDicomBufferFast(
   const seriesInstanceUid = getString('x0020000e', '0020000E', 'series_unknown');
   const studyInstanceUid = getString('x0020000d', '0020000D', 'study_unknown');
   const instanceNumber = getNumber('x00200013', '00200013', 1);
+  const echoNumber = getNumber('x00180086', '00180086', 1);
+  const acquisitionNumber = getNumber('x00200012', '00200012', 1);
+  const imageType = getString('x00080008', '00080008', '');
+  const echoTime = getNumber('x00180081', '00180081', 0);
+  const spacingBetweenSlices = getNumber('x00180088', '00180088', 0);
 
   // Store essential raw tags for fast access (avoiding 100K object allocations)
   const rawTags: Record<string, DicomTag> = {
@@ -859,6 +867,11 @@ export function parseDicomBufferFast(
   return {
     sopInstanceUid,
     instanceNumber,
+    echoNumber,
+    acquisitionNumber,
+    imageType,
+    echoTime,
+    spacingBetweenSlices: spacingBetweenSlices > 0 ? spacingBetweenSlices : undefined,
     rows,
     columns,
     bitsAllocated,
@@ -1463,15 +1476,7 @@ export function groupInstancesIntoStudies(
 
     for (const serData of sData.seriesMap.values()) {
       serData.instances.sort((a, b) => {
-        // 1. Primary: Standard DICOM InstanceNumber (0020,0013) acquisition sequence (matches RadiAnt)
-        if (a.instanceNumber !== undefined && b.instanceNumber !== undefined && a.instanceNumber !== b.instanceNumber) {
-          return a.instanceNumber - b.instanceNumber;
-        }
-        // 2. Secondary fallback: sliceLocation if instance numbers are missing/identical
-        if (a.sliceLocation !== undefined && b.sliceLocation !== undefined && Math.abs(a.sliceLocation - b.sliceLocation) > 0.001) {
-          return a.sliceLocation - b.sliceLocation;
-        }
-        // 3. Tertiary fallback: physical 3D normal distance
+        // 1. Primary: True physical 3D normal distance (handles interleaved MRI and spatial continuity)
         if (a.imagePositionPatient && b.imagePositionPatient && a.imageOrientationPatient) {
           const o = a.imageOrientationPatient;
           const nx = o[1] * o[5] - o[2] * o[4];
@@ -1479,9 +1484,17 @@ export function groupInstancesIntoStudies(
           const nz = o[0] * o[4] - o[1] * o[3];
           const distA = a.imagePositionPatient[0] * nx + a.imagePositionPatient[1] * ny + a.imagePositionPatient[2] * nz;
           const distB = b.imagePositionPatient[0] * nx + b.imagePositionPatient[1] * ny + b.imagePositionPatient[2] * nz;
-          if (Math.abs(distA - distB) > 0.001) {
+          if (Math.abs(distA - distB) > 0.05) {
             return distA - distB;
           }
+        }
+        // 2. Secondary: sliceLocation if available
+        if (a.sliceLocation !== undefined && b.sliceLocation !== undefined && Math.abs(a.sliceLocation - b.sliceLocation) > 0.05) {
+          return a.sliceLocation - b.sliceLocation;
+        }
+        // 3. Tertiary fallback: DICOM InstanceNumber (0020,0013)
+        if (a.instanceNumber !== undefined && b.instanceNumber !== undefined && a.instanceNumber !== b.instanceNumber) {
+          return a.instanceNumber - b.instanceNumber;
         }
         return 0;
       });

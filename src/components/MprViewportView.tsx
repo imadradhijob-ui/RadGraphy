@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   Layers,
   X,
@@ -31,7 +31,7 @@ import {
   Check
 } from 'lucide-react';
 import { DicomSeries, DicomStudy, MprPlane, Point2D, ToolType, ColorLutType, RoiStatistics } from '../types/dicom';
-import { MprEngine, Volume3D, ProjectionMode, MprSliceResult, detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice } from '../services/mprEngine';
+import { MprEngine, Volume3D, ProjectionMode, MprSliceResult, detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice, isEligibleForMpr } from '../services/mprEngine';
 import { VolumeRaycaster, VOLUME_3D_PRESETS, Volume3dPreset } from '../services/volumeRaycaster';
 import { DEFAULT_WINDOW_PRESETS } from '../services/windowPresets';
 import { getLutTable, classifyTissueFromHu, LUT_PRESETS } from '../services/lutService';
@@ -148,15 +148,15 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
   const [pitch3D, setPitch3D] = useState<number>(-15);
 
   useEffect(() => {
-    // If current series is invalid, topogram, or single-slice, automatically switch to the main volumetric series
-    if (study && onSelectSeries && (!series || isTopogramOrSingleSlice(series) || series.instances.length < 2)) {
+    // If current series is invalid, topogram, SR (Structured Report), or single-slice, automatically switch to the main volumetric series
+    if (study && onSelectSeries && (!series || !isEligibleForMpr(series))) {
       const mainVol = findMainVolumetricSeries(study);
       if (mainVol && mainVol.seriesInstanceUid !== series?.seriesInstanceUid) {
         onSelectSeries(mainVol);
         return;
       }
     }
-    if (!series || series.instances.length < 2) return;
+    if (!series || !isEligibleForMpr(series)) return;
     const vol = MprEngine.buildVolume(series);
     if (vol) {
       setVolume(vol);
@@ -214,6 +214,105 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
     setMeasurements([]);
   };
 
+  const sourcePlane = useMemo(() => {
+    if (volume?.acquisitionPlane) return volume.acquisitionPlane;
+    if (!series || !series.instances || series.instances.length === 0) return 'AXIAL';
+    const rep = series.instances[Math.floor(series.instances.length / 2)] || series.instances[0];
+    return detectAnatomicalPlane(series.seriesDescription, rep?.imageOrientationPatient) || 'AXIAL';
+  }, [series, volume]);
+
+  const ordered3ViewPlanes: ('axial' | 'coronal' | 'sagittal')[] = useMemo(() => {
+    if (sourcePlane === 'SAGITTAL') {
+      return ['sagittal', 'coronal', 'axial'];
+    } else if (sourcePlane === 'CORONAL') {
+      return ['coronal', 'axial', 'sagittal'];
+    } else {
+      return ['axial', 'coronal', 'sagittal'];
+    }
+  }, [sourcePlane]);
+
+  const renderPlaneViewport = (plane: 'axial' | 'coronal' | 'sagittal') => {
+    if (plane === 'axial') {
+      return (
+        <MprSingleViewport
+          key="axial"
+          plane="axial"
+          title="Axial"
+          labelColor="text-cyan-400"
+          lineColor="#06b6d4"
+          volume={volume}
+          crosshair={crosshair}
+          showCrosshairs={showCrosshairs}
+          windowCenter={effectiveWc}
+          windowWidth={effectiveWw}
+          lut={effectiveLut}
+          invert={effectiveInvert}
+          projectionMode={projectionMode}
+          slabThicknessMm={slabThicknessMm}
+          activeTool={activeTool}
+          measurements={measurements.filter(m => m.plane === 'axial')}
+          onAddMeasurement={handleAddMeasurement}
+          onUpdateCrosshair={setCrosshair}
+          onUpdateWindowing={handleWindowingChange}
+          onToggleMaximize={() => setLayout(layout === 'axial-only' ? lastMultiLayout : 'axial-only')}
+          isMaximized={layout === 'axial-only'}
+        />
+      );
+    }
+    if (plane === 'coronal') {
+      return (
+        <MprSingleViewport
+          key="coronal"
+          plane="coronal"
+          title="Coronal"
+          labelColor="text-emerald-400"
+          lineColor="#10b981"
+          volume={volume}
+          crosshair={crosshair}
+          showCrosshairs={showCrosshairs}
+          windowCenter={effectiveWc}
+          windowWidth={effectiveWw}
+          lut={effectiveLut}
+          invert={effectiveInvert}
+          projectionMode={projectionMode}
+          slabThicknessMm={slabThicknessMm}
+          activeTool={activeTool}
+          measurements={measurements.filter(m => m.plane === 'coronal')}
+          onAddMeasurement={handleAddMeasurement}
+          onUpdateCrosshair={setCrosshair}
+          onUpdateWindowing={handleWindowingChange}
+          onToggleMaximize={() => setLayout(layout === 'coronal-only' ? lastMultiLayout : 'coronal-only')}
+          isMaximized={layout === 'coronal-only'}
+        />
+      );
+    }
+    return (
+      <MprSingleViewport
+        key="sagittal"
+        plane="sagittal"
+        title="Sagittal"
+        labelColor="text-amber-400"
+        lineColor="#f59e0b"
+        volume={volume}
+        crosshair={crosshair}
+        showCrosshairs={showCrosshairs}
+        windowCenter={effectiveWc}
+        windowWidth={effectiveWw}
+        lut={effectiveLut}
+        invert={effectiveInvert}
+        projectionMode={projectionMode}
+        slabThicknessMm={slabThicknessMm}
+        activeTool={activeTool}
+        measurements={measurements.filter(m => m.plane === 'sagittal')}
+        onAddMeasurement={handleAddMeasurement}
+        onUpdateCrosshair={setCrosshair}
+        onUpdateWindowing={handleWindowingChange}
+        onToggleMaximize={() => setLayout(layout === 'sagittal-only' ? lastMultiLayout : 'sagittal-only')}
+        isMaximized={layout === 'sagittal-only'}
+      />
+    );
+  };
+
   return (
     <div className="flex-1 flex flex-col w-full h-full bg-radiant-darkest select-none text-slate-100">
       <div className="h-12 bg-radiant-panel border-b border-radiant-border flex items-center justify-between px-3 text-xs gap-2 relative z-50 overflow-visible">
@@ -224,8 +323,8 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
           </div>
 
           <div className="flex items-center gap-2 text-slate-300 font-medium">
-            {/* Interactive Series Selector Dropdown */}
-            {study && study.series.length > 1 && onSelectSeries ? (
+            {/* Interactive Series Selector Dropdown (Filters out SR and Scouts) */}
+            {study && study.series.filter(s => isEligibleForMpr(s)).length > 1 && onSelectSeries ? (
               <div className="relative">
                 <button
                   onClick={() => {
@@ -246,7 +345,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                   <>
                     <div className="fixed inset-0 z-40" onClick={() => setShowSeriesMenu(false)} />
                     <div className="absolute left-0 top-full mt-1 w-72 bg-radiant-panel border border-radiant-border rounded-lg shadow-2xl py-1 z-50 text-xs max-h-80 overflow-y-auto">
-                      {study.series.map((s) => {
+                      {study.series.filter(s => isEligibleForMpr(s)).map((s) => {
                         const rep = s.instances[Math.floor(s.instances.length / 2)] || s.instances[0];
                         const plane = detectAnatomicalPlane(s.seriesDescription, rep?.imageOrientationPatient);
                         const isSelected = s.seriesInstanceUid === series?.seriesInstanceUid;
@@ -262,11 +361,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                             }`}
                           >
                             <div className="flex items-center gap-2 min-w-0">
-                              {isTopogramOrSingleSlice(s) ? (
-                                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border bg-rose-950/80 text-rose-300 border-rose-600/50">
-                                  SCOUT
-                                </span>
-                              ) : plane ? (
+                              {plane ? (
                                 <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${
                                   plane === 'CORONAL'
                                     ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/50'
@@ -725,7 +820,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                 onClick={() => {
                   setLayout('2x2');
                   setLastMultiLayout('2x2');
-                  if (study && onSelectSeries) {
+                  if (study && onSelectSeries && (!series || isTopogramOrSingleSlice(series) || series.instances.length < 2)) {
                     const mainVol = findMainVolumetricSeries(study);
                     if (mainVol && mainVol.seriesInstanceUid !== series?.seriesInstanceUid) {
                       onSelectSeries(mainVol);
@@ -743,14 +838,14 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                 onClick={() => {
                   setLayout('3-view');
                   setLastMultiLayout('3-view');
-                  if (study && onSelectSeries) {
+                  if (study && onSelectSeries && (!series || isTopogramOrSingleSlice(series) || series.instances.length < 2)) {
                     const mainVol = findMainVolumetricSeries(study);
                     if (mainVol && mainVol.seriesInstanceUid !== series?.seriesInstanceUid) {
                       onSelectSeries(mainVol);
                     }
                   }
                 }}
-                title="1*3: عرض ثلاث متسلسلات فقط (Axial, Coronal, Sagittal)"
+                title="1*3: عرض ثلاث متسلسلات متعامدة (Sagittal, Coronal, Axial)"
                 className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
                   layout === '3-view' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 }`}
@@ -781,95 +876,29 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
             : 'grid-cols-1 grid-rows-1'
         }`}
       >
-        {(layout === '2x2' || layout === '3-view' || layout === 'axial-only') && (
-          <MprSingleViewport
-            plane="axial"
-            title="Axial"
-            labelColor="text-cyan-400"
-            lineColor="#38bdf8"
-            volume={volume}
-            crosshair={crosshair}
-            showCrosshairs={showCrosshairs}
-            windowCenter={effectiveWc}
-            windowWidth={effectiveWw}
-            lut={effectiveLut}
-            invert={effectiveInvert}
-            projectionMode={projectionMode}
-            slabThicknessMm={slabThicknessMm}
-            activeTool={activeTool}
-            measurements={measurements.filter(m => m.plane === 'axial')}
-            onAddMeasurement={handleAddMeasurement}
-            onUpdateCrosshair={setCrosshair}
-            onUpdateWindowing={handleWindowingChange}
-            onToggleMaximize={() => setLayout(layout === 'axial-only' ? lastMultiLayout : 'axial-only')}
-            isMaximized={layout === 'axial-only'}
-          />
-        )}
-
-        {(layout === '2x2' || layout === '3-view' || layout === 'coronal-only') && (
-          <MprSingleViewport
-            plane="coronal"
-            title="Coronal"
-            labelColor="text-amber-400"
-            lineColor="#f59e0b"
-            volume={volume}
-            crosshair={crosshair}
-            showCrosshairs={showCrosshairs}
-            windowCenter={effectiveWc}
-            windowWidth={effectiveWw}
-            lut={effectiveLut}
-            invert={effectiveInvert}
-            projectionMode={projectionMode}
-            slabThicknessMm={slabThicknessMm}
-            activeTool={activeTool}
-            measurements={measurements.filter(m => m.plane === 'coronal')}
-            onAddMeasurement={handleAddMeasurement}
-            onUpdateCrosshair={setCrosshair}
-            onUpdateWindowing={handleWindowingChange}
-            onToggleMaximize={() => setLayout(layout === 'coronal-only' ? lastMultiLayout : 'coronal-only')}
-            isMaximized={layout === 'coronal-only'}
-          />
-        )}
-
-        {(layout === '2x2' || layout === '3-view' || layout === 'sagittal-only') && (
-          <MprSingleViewport
-            plane="sagittal"
-            title="Sagittal"
-            labelColor="text-emerald-400"
-            lineColor="#10b981"
-            volume={volume}
-            crosshair={crosshair}
-            showCrosshairs={showCrosshairs}
-            windowCenter={effectiveWc}
-            windowWidth={effectiveWw}
-            lut={effectiveLut}
-            invert={effectiveInvert}
-            projectionMode={projectionMode}
-            slabThicknessMm={slabThicknessMm}
-            activeTool={activeTool}
-            measurements={measurements.filter(m => m.plane === 'sagittal')}
-            onAddMeasurement={handleAddMeasurement}
-            onUpdateCrosshair={setCrosshair}
-            onUpdateWindowing={handleWindowingChange}
-            onToggleMaximize={() => setLayout(layout === 'sagittal-only' ? lastMultiLayout : 'sagittal-only')}
-            isMaximized={layout === 'sagittal-only'}
-          />
-        )}
-
-        {(layout === '2x2' || layout === '3d-only') && (
-          <Mpr3dVolumeViewport
-            volume={volume}
-            crosshair={crosshair}
-            showCrosshairs={showCrosshairs}
-            yaw={yaw3D}
-            pitch={pitch3D}
-            onUpdateRotation={(newYaw, newPitch) => {
-              setYaw3D(newYaw);
-              setPitch3D(newPitch);
-            }}
-            onToggleMaximize={() => setLayout(layout === '3d-only' ? '2x2' : '3d-only')}
-            isMaximized={layout === '3d-only'}
-          />
+        {layout === '3-view' ? (
+          ordered3ViewPlanes.map(p => renderPlaneViewport(p))
+        ) : (
+          <>
+            {(layout === '2x2' || layout === 'axial-only') && renderPlaneViewport('axial')}
+            {(layout === '2x2' || layout === 'coronal-only') && renderPlaneViewport('coronal')}
+            {(layout === '2x2' || layout === 'sagittal-only') && renderPlaneViewport('sagittal')}
+            {(layout === '2x2' || layout === '3d-only') && (
+              <Mpr3dVolumeViewport
+                volume={volume}
+                crosshair={crosshair}
+                showCrosshairs={showCrosshairs}
+                yaw={yaw3D}
+                pitch={pitch3D}
+                onUpdateRotation={(newYaw, newPitch) => {
+                  setYaw3D(newYaw);
+                  setPitch3D(newPitch);
+                }}
+                onToggleMaximize={() => setLayout(layout === '3d-only' ? '2x2' : '3d-only')}
+                isMaximized={layout === '3d-only'}
+              />
+            )}
+          </>
         )}
       </div>
     </div>
@@ -1112,6 +1141,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
   
   const [isDragging, setIsDragging] = useState(false);
   const [isCrosshairDragging, setIsCrosshairDragging] = useState(false);
+  const [crosshairDragPart, setCrosshairDragPart] = useState<'hub' | 'horizontal' | 'vertical'>('hub');
   const [isHoveringCrosshair, setIsHoveringCrosshair] = useState(false);
   const [dragBtn, setDragBtn] = useState<number>(0);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -1170,7 +1200,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     } else if (plane === 'coronal') {
       base = ['S', 'L', 'I', 'R'];
     } else {
-      base = ['S', 'P', 'I', 'A'];
+      base = ['S', 'A', 'I', 'P'];
     }
 
     const steps = ((rotationDeg / 90) % 4 + 4) % 4;
@@ -1209,7 +1239,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     if (!ctx) return;
 
     const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm);
-    const { width, height, huData, scaleY } = slice;
+    const { width, height, huData } = slice;
 
     const imgData = ctx.createImageData(width, height);
     const data = imgData.data;
@@ -1255,10 +1285,10 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, displayWidth, displayHeight);
 
-    const visualHeight = height * scaleY;
+    // Isotropic square-pixel geometry (RadiAnt standard)
     const isRotated90or270 = rotationDeg === 90 || rotationDeg === 270;
-    const effWidth = isRotated90or270 ? visualHeight : width;
-    const effHeight = isRotated90or270 ? width : visualHeight;
+    const effWidth = isRotated90or270 ? height : width;
+    const effHeight = isRotated90or270 ? width : height;
     const fitScale = Math.min(displayWidth / effWidth, displayHeight / effHeight) * zoom;
     const cx = displayWidth / 2 + pan.x;
     const cy = displayHeight / 2 + pan.y;
@@ -1270,7 +1300,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     if (flipH || flipV) {
       ctx.scale(flipH ? -1 : 1, flipV ? -1 : 1);
     }
-    ctx.scale(fitScale, fitScale * scaleY);
+    ctx.scale(fitScale, fitScale);
 
     if (!tempCanvasRef.current) {
       tempCanvasRef.current = document.createElement('canvas');
@@ -1284,37 +1314,39 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     if (tempCtx) {
       tempCtx.putImageData(imgData, 0, 0);
       ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'medium';
+      ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(tempCanvas, -width / 2, -height / 2);
     }
-
-    ctx.scale(1, 1 / scaleY);
 
     if (showCrosshairs) {
       const isAxial = plane === 'axial';
       const isCoronal = plane === 'coronal';
 
-      const hColor = isAxial ? '#f43f5e' : '#06b6d4';
-      const vColor = isAxial ? '#06b6d4' : isCoronal ? '#10b981' : '#f43f5e';
-      const leftLabel = isAxial ? 'R' : isCoronal ? 'R' : 'A';
-      const rightLabel = isAxial ? 'L' : isCoronal ? 'L' : 'P';
+      // RadiAnt standard colors: Axial = Cyan (#06b6d4), Coronal = Green (#10b981), Sagittal = Amber (#f59e0b)
+      const hColor = isAxial ? '#10b981' : '#06b6d4'; // In Axial: horizontal is Coronal (Green). In Coronal & Sagittal: horizontal is Axial (Cyan).
+      const vColor = isAxial ? '#f59e0b' : isCoronal ? '#f59e0b' : '#10b981'; // In Axial & Coronal: vertical is Sagittal (Amber). In Sagittal: vertical is Coronal (Green).
+
+      const leftLabel = isAxial ? 'R' : isCoronal ? 'R' : 'P';
+      const rightLabel = isAxial ? 'L' : isCoronal ? 'L' : 'A';
+      const topLabel = isAxial ? 'A' : 'S';
+      const bottomLabel = isAxial ? 'P' : 'I';
 
       let chX = 0;
       let chY = 0;
 
       if (plane === 'axial') {
-        chX = crosshair.x - width / 2;
-        chY = (crosshair.y - height / 2) * scaleY;
+        chX = (crosshair.x / Math.max(1, volume.dimX - 1)) * (width - 1) - width / 2;
+        chY = (crosshair.y / Math.max(1, volume.dimY - 1)) * (height - 1) - height / 2;
       } else if (plane === 'coronal') {
-        chX = crosshair.x - width / 2;
-        chY = (crosshair.z - height / 2) * scaleY;
+        chX = (crosshair.x / Math.max(1, volume.dimX - 1)) * (width - 1) - width / 2;
+        chY = (crosshair.z / Math.max(1, volume.dimZ - 1)) * (height - 1) - height / 2;
       } else {
-        chX = crosshair.y - width / 2;
-        chY = (crosshair.z - height / 2) * scaleY;
+        chX = (crosshair.y / Math.max(1, volume.dimY - 1)) * (width - 1) - width / 2;
+        chY = (crosshair.z / Math.max(1, volume.dimZ - 1)) * (height - 1) - height / 2;
       }
 
       const extW = Math.max(width / 2 + 100 / fitScale, displayWidth / fitScale);
-      const extH = Math.max((height * scaleY) / 2 + 100 / fitScale, displayHeight / fitScale);
+      const extH = Math.max(height / 2 + 100 / fitScale, displayHeight / fitScale);
 
       // Horizontal reference line (Full width spanning across the view like RadiAnt)
       ctx.lineWidth = 1.3 / fitScale;
@@ -1324,13 +1356,16 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       ctx.lineTo(extW, chY);
       ctx.stroke();
 
-      // Horizontal line end handle / anchor dot
+      // Horizontal line end handles
       ctx.fillStyle = hColor;
       ctx.beginPath();
       ctx.arc(-width / 2, chY, 3.5 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
+      ctx.beginPath();
+      ctx.arc(width / 2, chY, 3.5 / fitScale, 0, 2 * Math.PI);
+      ctx.fill();
 
-      // Left & Right anatomical labels directly on the reference line (RadiAnt style)
+      // Left & Right anatomical labels directly on the reference line
       ctx.font = `bold ${Math.max(10, Math.round(12 / fitScale))}px sans-serif`;
       ctx.fillStyle = hColor;
       ctx.textAlign = 'left';
@@ -1348,17 +1383,32 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       ctx.lineTo(chX, extH);
       ctx.stroke();
 
-      // Top circular handle dot on vertical line (RadiAnt style)
+      // Top & bottom handles on vertical line
       ctx.fillStyle = vColor;
       ctx.beginPath();
-      ctx.arc(chX, (-height / 2) * scaleY + 8 / fitScale, 4.0 / fitScale, 0, 2 * Math.PI);
+      ctx.arc(chX, -height / 2 + 8 / fitScale, 3.5 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
+      ctx.beginPath();
+      ctx.arc(chX, height / 2 - 8 / fitScale, 3.5 / fitScale, 0, 2 * Math.PI);
+      ctx.fill();
+
+      // Top & Bottom labels on vertical line
+      ctx.font = `bold ${Math.max(10, Math.round(11 / fitScale))}px sans-serif`;
+      ctx.fillStyle = vColor;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(topLabel, chX, -height / 2 + 14 / fitScale);
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(bottomLabel, chX, height / 2 - 14 / fitScale);
 
       // Center crosshair intersection indicator
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.arc(chX, chY, 2.5 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.lineWidth = 1 / fitScale;
+      ctx.stroke();
     }
 
     measurements.forEach((m) => {
@@ -1376,16 +1426,16 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p1 = m.points[0];
         const p2 = m.points[1];
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y * scaleY);
-        ctx.lineTo(p2.x, p2.y * scaleY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
 
-        drawMprCaliper(ctx, p1.x, p1.y * scaleY, 3 / fitScale);
-        drawMprCaliper(ctx, p2.x, p2.y * scaleY, 3 / fitScale);
+        drawMprCaliper(ctx, p1.x, p1.y, 3 / fitScale);
+        drawMprCaliper(ctx, p2.x, p2.y, 3 / fitScale);
 
         if (m.distanceMm !== undefined) {
           const midX = (p1.x + p2.x) / 2;
-          const midY = ((p1.y + p2.y) / 2) * scaleY;
+          const midY = (p1.y + p2.y) / 2;
           drawMprBadge(ctx, `${m.distanceMm.toFixed(1)} mm`, midX + 8 / fitScale, midY - 6 / fitScale, fitScale);
         }
       } else if (m.type === 'angle' && m.points.length >= 3) {
@@ -1393,17 +1443,17 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p2 = m.points[1];
         const p3 = m.points[2];
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y * scaleY);
-        ctx.lineTo(p2.x, p2.y * scaleY);
-        ctx.lineTo(p3.x, p3.y * scaleY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
         ctx.stroke();
 
-        drawMprCaliper(ctx, p1.x, p1.y * scaleY, 2.5 / fitScale);
-        drawMprCaliper(ctx, p2.x, p2.y * scaleY, 3.5 / fitScale);
-        drawMprCaliper(ctx, p3.x, p3.y * scaleY, 2.5 / fitScale);
+        drawMprCaliper(ctx, p1.x, p1.y, 2.5 / fitScale);
+        drawMprCaliper(ctx, p2.x, p2.y, 3.5 / fitScale);
+        drawMprCaliper(ctx, p3.x, p3.y, 2.5 / fitScale);
 
         if (m.angleDeg !== undefined) {
-          drawMprBadge(ctx, `${m.angleDeg.toFixed(1)}°`, p2.x + 8 / fitScale, p2.y * scaleY - 6 / fitScale, fitScale);
+          drawMprBadge(ctx, `${m.angleDeg.toFixed(1)}°`, p2.x + 8 / fitScale, p2.y - 6 / fitScale, fitScale);
         }
       } else if (m.type === 'cobb_angle' && m.points.length >= 4) {
         const p1 = m.points[0];
@@ -1412,29 +1462,29 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p4 = m.points[3];
 
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y * scaleY);
-        ctx.lineTo(p2.x, p2.y * scaleY);
-        ctx.moveTo(p3.x, p3.y * scaleY);
-        ctx.lineTo(p4.x, p4.y * scaleY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.moveTo(p3.x, p3.y);
+        ctx.lineTo(p4.x, p4.y);
         ctx.stroke();
 
-        drawMprCaliper(ctx, p1.x, p1.y * scaleY, 2.5 / fitScale);
-        drawMprCaliper(ctx, p2.x, p2.y * scaleY, 2.5 / fitScale);
-        drawMprCaliper(ctx, p3.x, p3.y * scaleY, 2.5 / fitScale);
-        drawMprCaliper(ctx, p4.x, p4.y * scaleY, 2.5 / fitScale);
+        drawMprCaliper(ctx, p1.x, p1.y, 2.5 / fitScale);
+        drawMprCaliper(ctx, p2.x, p2.y, 2.5 / fitScale);
+        drawMprCaliper(ctx, p3.x, p3.y, 2.5 / fitScale);
+        drawMprCaliper(ctx, p4.x, p4.y, 2.5 / fitScale);
 
         if (m.cobbDeg !== undefined) {
           const midX = (p2.x + p4.x) / 2;
-          const midY = ((p2.y + p4.y) / 2) * scaleY;
+          const midY = (p2.y + p4.y) / 2;
           drawMprBadge(ctx, `Cobb: ${m.cobbDeg.toFixed(1)}°`, midX + 8 / fitScale, midY, fitScale, 'rgba(15, 23, 42, 0.88)', '#ec4899');
         }
       } else if (m.type === 'rectangle_roi' && m.points.length >= 2) {
         const p1 = m.points[0];
         const p2 = m.points[1];
         const left = Math.min(p1.x, p2.x);
-        const top = Math.min(p1.y * scaleY, p2.y * scaleY);
+        const top = Math.min(p1.y, p2.y);
         const w = Math.abs(p1.x - p2.x);
-        const h = Math.abs(p1.y * scaleY - p2.y * scaleY);
+        const h = Math.abs(p1.y - p2.y);
 
         ctx.strokeRect(left, top, w, h);
 
@@ -1446,9 +1496,9 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p1 = m.points[0];
         const p2 = m.points[1];
         const cxE = (p1.x + p2.x) / 2;
-        const cyE = ((p1.y + p2.y) / 2) * scaleY;
+        const cyE = (p1.y + p2.y) / 2;
         const rx = Math.abs(p1.x - p2.x) / 2;
-        const ry = (Math.abs(p1.y - p2.y) / 2) * scaleY;
+        const ry = Math.abs(p1.y - p2.y) / 2;
 
         ctx.beginPath();
         ctx.ellipse(cxE, cyE, Math.max(1 / fitScale, rx), Math.max(1 / fitScale, ry), 0, 0, 2 * Math.PI);
@@ -1463,30 +1513,30 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p2 = m.points[1];
 
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y * scaleY);
-        ctx.lineTo(p2.x, p2.y * scaleY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
 
         const headLen = 12 / fitScale;
-        const angle = Math.atan2((p2.y - p1.y) * scaleY, p2.x - p1.x);
+        const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
         ctx.beginPath();
-        ctx.moveTo(p2.x, p2.y * scaleY);
-        ctx.lineTo(p2.x - headLen * Math.cos(angle - Math.PI / 6), p2.y * scaleY - headLen * Math.sin(angle - Math.PI / 6));
-        ctx.lineTo(p2.x - headLen * Math.cos(angle + Math.PI / 6), p2.y * scaleY - headLen * Math.sin(angle + Math.PI / 6));
+        ctx.moveTo(p2.x, p2.y);
+        ctx.lineTo(p2.x - headLen * Math.cos(angle - Math.PI / 6), p2.y - headLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(p2.x - headLen * Math.cos(angle + Math.PI / 6), p2.y - headLen * Math.sin(angle + Math.PI / 6));
         ctx.closePath();
         ctx.fill();
 
         if (m.arrowText) {
-          drawMprBadge(ctx, m.arrowText, p2.x + 8 / fitScale, p2.y * scaleY - 6 / fitScale, fitScale, 'rgba(15, 23, 42, 0.88)', '#f59e0b');
+          drawMprBadge(ctx, m.arrowText, p2.x + 8 / fitScale, p2.y - 6 / fitScale, fitScale, 'rgba(15, 23, 42, 0.88)', '#f59e0b');
         }
       } else if (m.type === 'hu_probe' && m.points.length >= 1) {
         const p = m.points[0];
         ctx.beginPath();
-        ctx.arc(p.x, p.y * scaleY, 4 / fitScale, 0, 2 * Math.PI);
+        ctx.arc(p.x, p.y, 4 / fitScale, 0, 2 * Math.PI);
         ctx.fill();
 
         const label = `${m.probeHu !== undefined ? m.probeHu : 0} HU\n${m.tissueName || 'Tissue'}`;
-        drawMprBadge(ctx, label, p.x + 8 / fitScale, p.y * scaleY - 6 / fitScale, fitScale, 'rgba(15, 23, 42, 0.88)', '#10b981');
+        drawMprBadge(ctx, label, p.x + 8 / fitScale, p.y - 6 / fitScale, fitScale, 'rgba(15, 23, 42, 0.88)', '#10b981');
       }
 
       ctx.restore();
@@ -1503,50 +1553,50 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p1 = drawingPoints[0];
         const p2 = drawingPoints[1];
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y * scaleY);
-        ctx.lineTo(p2.x, p2.y * scaleY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
 
         const dx = (p2.x - p1.x) * slice.pixelSpacing[1];
         const dy = (p2.y - p1.y) * slice.pixelSpacing[0];
         const distMm = Math.sqrt(dx * dx + dy * dy);
-        drawMprBadge(ctx, `${distMm.toFixed(1)} mm`, (p1.x + p2.x) / 2 + 8 / fitScale, ((p1.y + p2.y) / 2) * scaleY - 6 / fitScale, fitScale);
+        drawMprBadge(ctx, `${distMm.toFixed(1)} mm`, (p1.x + p2.x) / 2 + 8 / fitScale, (p1.y + p2.y) / 2 - 6 / fitScale, fitScale);
       } else if (activeTool === 'angle') {
         ctx.beginPath();
-        ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y * scaleY);
+        ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y);
         for (let i = 1; i < drawingPoints.length; i++) {
-          ctx.lineTo(drawingPoints[i].x, drawingPoints[i].y * scaleY);
+          ctx.lineTo(drawingPoints[i].x, drawingPoints[i].y);
         }
         ctx.stroke();
       } else if (activeTool === 'cobb_angle') {
         if (drawingPoints.length === 2) {
           ctx.beginPath();
-          ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y * scaleY);
-          ctx.lineTo(drawingPoints[1].x, drawingPoints[1].y * scaleY);
+          ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y);
+          ctx.lineTo(drawingPoints[1].x, drawingPoints[1].y);
           ctx.stroke();
         } else if (drawingPoints.length >= 3) {
           ctx.beginPath();
-          ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y * scaleY);
-          ctx.lineTo(drawingPoints[1].x, drawingPoints[1].y * scaleY);
-          ctx.moveTo(drawingPoints[2].x, drawingPoints[2].y * scaleY);
-          if (drawingPoints[3]) ctx.lineTo(drawingPoints[3].x, drawingPoints[3].y * scaleY);
+          ctx.moveTo(drawingPoints[0].x, drawingPoints[0].y);
+          ctx.lineTo(drawingPoints[1].x, drawingPoints[1].y);
+          ctx.moveTo(drawingPoints[2].x, drawingPoints[2].y);
+          if (drawingPoints[3]) ctx.lineTo(drawingPoints[3].x, drawingPoints[3].y);
           ctx.stroke();
         }
       } else if (activeTool === 'rectangle_roi' && drawingPoints.length >= 2) {
         const p1 = drawingPoints[0];
         const p2 = drawingPoints[1];
         const left = Math.min(p1.x, p2.x);
-        const top = Math.min(p1.y * scaleY, p2.y * scaleY);
+        const top = Math.min(p1.y, p2.y);
         const w = Math.abs(p1.x - p2.x);
-        const h = Math.abs(p1.y * scaleY - p2.y * scaleY);
+        const h = Math.abs(p1.y - p2.y);
         ctx.strokeRect(left, top, w, h);
       } else if (activeTool === 'ellipse_roi' && drawingPoints.length >= 2) {
         const p1 = drawingPoints[0];
         const p2 = drawingPoints[1];
         const cxE = (p1.x + p2.x) / 2;
-        const cyE = ((p1.y + p2.y) / 2) * scaleY;
+        const cyE = (p1.y + p2.y) / 2;
         const rx = Math.abs(p1.x - p2.x) / 2;
-        const ry = (Math.abs(p1.y - p2.y) / 2) * scaleY;
+        const ry = Math.abs(p1.y - p2.y) / 2;
 
         ctx.beginPath();
         ctx.ellipse(cxE, cyE, Math.max(1 / fitScale, rx), Math.max(1 / fitScale, ry), 0, 0, 2 * Math.PI);
@@ -1555,8 +1605,8 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         const p1 = drawingPoints[0];
         const p2 = drawingPoints[1];
         ctx.beginPath();
-        ctx.moveTo(p1.x, p1.y * scaleY);
-        ctx.lineTo(p2.x, p2.y * scaleY);
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
         ctx.stroke();
       }
 
@@ -1582,21 +1632,18 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
 
   const getPlaneGeometry = useCallback(() => {
     if (!volume) return { width: 1, height: 1, scaleY: 1.0 };
-    const width = plane === 'axial' ? volume.dimX : plane === 'coronal' ? volume.dimX : volume.dimY;
-    const height = plane === 'axial' ? volume.dimY : volume.dimZ;
-    const scaleY = plane === 'axial' ? (volume.spacingX > 0 ? volume.spacingY / volume.spacingX : 1.0) : plane === 'coronal' ? (volume.spacingZ / volume.spacingX) : (volume.spacingZ / volume.spacingY);
-    return { width, height, scaleY };
+    const dims = MprEngine.getSliceDimensions(volume, plane);
+    return { width: dims.width, height: dims.height, scaleY: 1.0 };
   }, [volume, plane]);
 
   const screenToVolumeCoord = useCallback((clientX: number, clientY: number): Point2D | null => {
     if (!canvasRef.current || !volume || !containerRef.current) return null;
     const rect = canvasRef.current.getBoundingClientRect();
-    const { width, height, scaleY } = getPlaneGeometry();
+    const { width, height } = getPlaneGeometry();
 
-    const visualHeight = height * scaleY;
     const isRotated90or270 = rotationDeg === 90 || rotationDeg === 270;
-    const effWidth = isRotated90or270 ? visualHeight : width;
-    const effHeight = isRotated90or270 ? width : visualHeight;
+    const effWidth = isRotated90or270 ? height : width;
+    const effHeight = isRotated90or270 ? width : height;
     const fitScale = Math.min(rect.width / effWidth, rect.height / effHeight) * zoom;
     if (fitScale <= 0) return null;
 
@@ -1617,34 +1664,33 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     if (flipV) screenDy = -screenDy;
 
     const relX = screenDx / fitScale;
-    const relY = screenDy / (fitScale * scaleY);
+    const relY = screenDy / fitScale;
 
     return { x: relX, y: relY };
   }, [volume, getPlaneGeometry, zoom, pan, rotationDeg, flipH, flipV]);
 
-  const checkNearCrosshair = useCallback((clientX: number, clientY: number): boolean => {
-    if (!canvasRef.current || !volume || !containerRef.current || !showCrosshairs) return false;
+  const checkNearCrosshair = useCallback((clientX: number, clientY: number): { near: boolean; part: 'hub' | 'horizontal' | 'vertical' } => {
+    if (!canvasRef.current || !volume || !containerRef.current || !showCrosshairs) return { near: false, part: 'hub' };
     const rect = canvasRef.current.getBoundingClientRect();
-    const { width, height, scaleY } = getPlaneGeometry();
+    const { width, height } = getPlaneGeometry();
 
-    const visualHeight = height * scaleY;
     const isRotated90or270 = rotationDeg === 90 || rotationDeg === 270;
-    const effWidth = isRotated90or270 ? visualHeight : width;
-    const effHeight = isRotated90or270 ? width : visualHeight;
+    const effWidth = isRotated90or270 ? height : width;
+    const effHeight = isRotated90or270 ? width : height;
     const fitScale = Math.min(rect.width / effWidth, rect.height / effHeight) * zoom;
-    if (fitScale <= 0) return false;
+    if (fitScale <= 0) return { near: false, part: 'hub' };
 
     let chX = 0;
     let chY = 0;
     if (plane === 'axial') {
-      chX = crosshair.x - width / 2;
-      chY = (crosshair.y - height / 2) * scaleY;
+      chX = (crosshair.x / Math.max(1, volume.dimX - 1)) * (width - 1) - width / 2;
+      chY = (crosshair.y / Math.max(1, volume.dimY - 1)) * (height - 1) - height / 2;
     } else if (plane === 'coronal') {
-      chX = crosshair.x - width / 2;
-      chY = (crosshair.z - height / 2) * scaleY;
+      chX = (crosshair.x / Math.max(1, volume.dimX - 1)) * (width - 1) - width / 2;
+      chY = (crosshair.z / Math.max(1, volume.dimZ - 1)) * (height - 1) - height / 2;
     } else {
-      chX = crosshair.y - width / 2;
-      chY = (crosshair.z - height / 2) * scaleY;
+      chX = (crosshair.y / Math.max(1, volume.dimY - 1)) * (width - 1) - width / 2;
+      chY = (crosshair.z / Math.max(1, volume.dimZ - 1)) * (height - 1) - height / 2;
     }
 
     let rotChX = chX * fitScale;
@@ -1666,11 +1712,11 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     const screenChX = rect.left + rect.width / 2 + pan.x + rotChX;
     const screenChY = rect.top + rect.height / 2 + pan.y + rotChY;
 
-    // Check distance to center intersection hub (20px grab zone)
+    // Check distance to center intersection hub (22px grab zone)
     const distToHub = Math.hypot(clientX - screenChX, clientY - screenChY);
-    if (distToHub <= 20) return true;
+    if (distToHub <= 22) return { near: true, part: 'hub' };
 
-    // Check distance to rotated vertical or horizontal crosshair lines (10px grab zone)
+    // Distance to individual horizontal / vertical lines
     let localX = clientX - screenChX;
     let localY = clientY - screenChY;
     if (rotationDeg !== 0) {
@@ -1683,11 +1729,13 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       localY = ry;
     }
 
-    const nearLine = Math.abs(localX) <= 10 || Math.abs(localY) <= 10;
-    return nearLine;
+    if (Math.abs(localY) <= 12) return { near: true, part: 'horizontal' };
+    if (Math.abs(localX) <= 12) return { near: true, part: 'vertical' };
+
+    return { near: false, part: 'hub' };
   }, [volume, plane, crosshair, showCrosshairs, getPlaneGeometry, zoom, pan, rotationDeg, flipH, flipV]);
 
-  const updateCrosshairFromMouse = useCallback((clientX: number, clientY: number) => {
+  const updateCrosshairFromMouse = useCallback((clientX: number, clientY: number, part: 'hub' | 'horizontal' | 'vertical' = 'hub') => {
     if (!canvasRef.current || !volume || !containerRef.current) return;
     const pt = screenToVolumeCoord(clientX, clientY);
     if (!pt) return;
@@ -1698,16 +1746,33 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
 
     onUpdateCrosshair(prev => {
       if (plane === 'axial') {
-        if (prev.x === clampedX && prev.y === clampedY) return prev;
-        return { ...prev, x: clampedX, y: clampedY };
+        const u = clampedX / Math.max(1, width - 1);
+        const v = clampedY / Math.max(1, height - 1);
+        const newX = Math.round(u * (volume.dimX - 1));
+        const newY = Math.round(v * (volume.dimY - 1));
+        const nextX = part === 'horizontal' ? prev.x : newX;
+        const nextY = part === 'vertical' ? prev.y : newY;
+        if (prev.x === nextX && prev.y === nextY) return prev;
+        return { ...prev, x: nextX, y: nextY };
       } else if (plane === 'coronal') {
-        const newZ = clampedY;
-        if (prev.x === clampedX && prev.z === newZ) return prev;
-        return { ...prev, x: clampedX, z: newZ };
+        const u = clampedX / Math.max(1, width - 1);
+        const v = clampedY / Math.max(1, height - 1);
+        const newX = Math.round(u * (volume.dimX - 1));
+        const newZ = Math.round(v * (volume.dimZ - 1));
+        const nextX = part === 'horizontal' ? prev.x : newX;
+        const nextZ = part === 'vertical' ? prev.z : newZ;
+        if (prev.x === nextX && prev.z === nextZ) return prev;
+        return { ...prev, x: nextX, z: nextZ };
       } else {
-        const newZ = clampedY;
-        if (prev.y === clampedX && prev.z === newZ) return prev;
-        return { ...prev, y: clampedX, z: newZ };
+        // Sagittal: X in slice is Y in volume, Y in slice is Z in volume
+        const u = clampedX / Math.max(1, width - 1);
+        const v = clampedY / Math.max(1, height - 1);
+        const newY = Math.round(u * (volume.dimY - 1));
+        const newZ = Math.round(v * (volume.dimZ - 1));
+        const nextY = part === 'horizontal' ? prev.y : newY;
+        const nextZ = part === 'vertical' ? prev.z : newZ;
+        if (prev.y === nextY && prev.z === nextZ) return prev;
+        return { ...prev, y: nextY, z: nextZ };
       }
     });
   }, [volume, plane, screenToVolumeCoord, getPlaneGeometry, onUpdateCrosshair]);
@@ -1717,7 +1782,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     if (!isCrosshairDragging) return;
 
     const handleWindowMouseMove = (e: MouseEvent) => {
-      updateCrosshairFromMouse(e.clientX, e.clientY);
+      updateCrosshairFromMouse(e.clientX, e.clientY, crosshairDragPart);
     };
 
     const handleWindowMouseUp = () => {
@@ -1732,7 +1797,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       window.removeEventListener('mousemove', handleWindowMouseMove);
       window.removeEventListener('mouseup', handleWindowMouseUp);
     };
-  }, [isCrosshairDragging, updateCrosshairFromMouse]);
+  }, [isCrosshairDragging, crosshairDragPart, updateCrosshairFromMouse]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -1749,9 +1814,11 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     if (e.button === 0) {
       const nearCh = checkNearCrosshair(e.clientX, e.clientY);
       // Immediately initiate crosshair dragging if clicked on/near crosshairs, or in crosshair tool mode, or with Shift
-      if (activeTool === 'crosshair' || nearCh || e.shiftKey) {
+      if (activeTool === 'crosshair' || nearCh.near || e.shiftKey) {
+        const part = nearCh.near ? nearCh.part : 'hub';
+        setCrosshairDragPart(part);
         setIsCrosshairDragging(true);
-        updateCrosshairFromMouse(e.clientX, e.clientY);
+        updateCrosshairFromMouse(e.clientX, e.clientY, part);
         return;
       }
 
@@ -1841,7 +1908,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
 
   const handleMouseMove = (e: React.MouseEvent) => {
     if (!isCrosshairDragging) {
-      setIsHoveringCrosshair(checkNearCrosshair(e.clientX, e.clientY));
+      setIsHoveringCrosshair(checkNearCrosshair(e.clientX, e.clientY).near);
     }
 
     const pt = screenToVolumeCoord(e.clientX, e.clientY);
@@ -1854,15 +1921,15 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       if (ix >= 0 && ix < width && iy >= 0 && iy < height) {
         let voxelVal: number | null = null;
         if (plane === 'axial') {
-          const z = Math.max(0, Math.min(volume.dimZ - 1, crosshair.z));
+          const z = Math.max(0, Math.min(volume.dimZ - 1, Math.round(crosshair.z)));
           voxelVal = volume.data[z * volume.dimX * volume.dimY + iy * volume.dimX + ix];
         } else if (plane === 'coronal') {
-          const y = Math.max(0, Math.min(volume.dimY - 1, crosshair.y));
-          const z = Math.max(0, Math.min(volume.dimZ - 1, iy));
+          const y = Math.max(0, Math.min(volume.dimY - 1, Math.round(crosshair.y)));
+          const z = Math.max(0, Math.min(volume.dimZ - 1, Math.round((iy / Math.max(1, height - 1)) * (volume.dimZ - 1))));
           voxelVal = volume.data[z * volume.dimX * volume.dimY + y * volume.dimX + ix];
         } else {
-          const x = Math.max(0, Math.min(volume.dimX - 1, crosshair.x));
-          const z = Math.max(0, Math.min(volume.dimZ - 1, iy));
+          const x = Math.max(0, Math.min(volume.dimX - 1, Math.round(crosshair.x)));
+          const z = Math.max(0, Math.min(volume.dimZ - 1, Math.round((iy / Math.max(1, height - 1)) * (volume.dimZ - 1))));
           voxelVal = volume.data[z * volume.dimX * volume.dimY + ix * volume.dimX + x];
         }
         if (voxelVal !== null) {
@@ -1874,7 +1941,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     }
 
     if (isCrosshairDragging) {
-      updateCrosshairFromMouse(e.clientX, e.clientY);
+      updateCrosshairFromMouse(e.clientX, e.clientY, crosshairDragPart);
       return;
     }
 
