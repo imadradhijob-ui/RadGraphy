@@ -283,19 +283,19 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     const callingAeTitle = (editForm.callingAeTitle || 'RADNODE_VIEWER').trim();
 
     if (!name) {
-      setFormError('يرجى إدخال اسم الخادم (Server Name)');
+      setFormError('Please enter the PACS Server Name');
       return;
     }
     if (!aeTitle) {
-      setFormError('يرجى إدخال PACS Called AE Title');
+      setFormError('Please enter the PACS Called AE Title');
       return;
     }
     if (!host) {
-      setFormError('يرجى إدخال عنوان IP / Host للخادم');
+      setFormError('Please enter the Server IP address or Hostname');
       return;
     }
     if (!port || isNaN(port) || port <= 0 || port > 65535) {
-      setFormError('يرجى إدخال رقم منفذ صحيح (Port: 1 - 65535)');
+      setFormError('Please enter a valid Port number (1 - 65535)');
       return;
     }
 
@@ -319,8 +319,8 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     setSelectedServerId(updatedServer.id);
     setEditingServer(null);
     setFormError(null);
-    setServerSuccessToast(`تم تحديث بيانات الخادم بنجاح: ${updatedServer.name}`);
-    setStatusMessage(`تم تحديث إعدادات الباكس: ${updatedServer.name} (${updatedServer.host}:${updatedServer.port})`);
+    setServerSuccessToast(`PACS server updated successfully: ${updatedServer.name}`);
+    setStatusMessage(`PACS server configured: ${updatedServer.name} (${updatedServer.host}:${updatedServer.port})`);
     setTimeout(() => setServerSuccessToast(null), 4000);
   };
 
@@ -333,19 +333,19 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     const callingAeTitle = (newServer.callingAeTitle || 'RADNODE_VIEWER').trim();
 
     if (!name) {
-      setFormError('يرجى إدخال اسم الخادم (Server Name)');
+      setFormError('Please enter the PACS Server Name');
       return;
     }
     if (!aeTitle) {
-      setFormError('يرجى إدخال PACS Called AE Title');
+      setFormError('Please enter the PACS Called AE Title');
       return;
     }
     if (!host) {
-      setFormError('يرجى إدخال عنوان IP / Host للخادم');
+      setFormError('Please enter the Server IP address or Hostname');
       return;
     }
     if (!port || isNaN(port) || port <= 0 || port > 65535) {
-      setFormError('يرجى إدخال رقم منفذ صحيح (Port: 1 - 65535)');
+      setFormError('Please enter a valid Port number (1 - 65535)');
       return;
     }
 
@@ -369,8 +369,8 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     setIsAddingServer(false);
     setSelectedServerId(s.id);
     setFormError(null);
-    setServerSuccessToast(`تمت إضافة خادم الباكس بنجاح: ${s.name}`);
-    setStatusMessage(`تمت إضافة خادم الباكس الجديد: ${s.name}`);
+    setServerSuccessToast(`PACS server added successfully: ${s.name}`);
+    setStatusMessage(`New PACS server added: ${s.name}`);
     setTimeout(() => setServerSuccessToast(null), 4000);
   };
 
@@ -382,7 +382,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     if (selectedServerId === id && updated.length > 0) {
       setSelectedServerId(updated[0].id);
     }
-    setServerSuccessToast(`تم حذف خادم الباكس: ${deleted?.name || id}`);
+    setServerSuccessToast(`PACS server deleted: ${deleted?.name || id}`);
     setTimeout(() => setServerSuccessToast(null), 3000);
   };
 
@@ -818,7 +818,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                   <div className="flex items-center gap-2">
                     <Edit2 className="w-4 h-4 text-cyan-400" />
                     <h4 className="font-bold text-cyan-300 text-sm">
-                      تعديل إعدادات خادم الباكس: <span className="text-white font-mono">{editingServer.name}</span>
+                      Edit PACS Server Configuration: <span className="text-white font-mono">{editingServer.name}</span>
                     </h4>
                   </div>
                   <span className="text-[10px] text-slate-400 font-mono">ID: {editingServer.id}</span>
@@ -986,7 +986,7 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-bold rounded flex items-center gap-1.5 shadow-md transition-colors"
                     >
                       <Save className="w-3.5 h-3.5" />
-                      <span>حفظ التعديلات (Save Changes)</span>
+                      <span>Save Changes</span>
                     </button>
                   </div>
                 </div>

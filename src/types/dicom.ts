@@ -221,6 +221,7 @@ export interface ViewportState {
   cineFps: number;
   measurements: Measurement[];
   showOverlays?: boolean;
+  isSyncLocked?: boolean; // When true and split screen is active, this viewport participates in cross-viewport sync
 }
 
 export interface WindowPreset {

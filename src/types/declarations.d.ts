@@ -55,6 +55,7 @@ interface Window {
     openDicomFiles: () => Promise<Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>>;
     openDicomDirectory: () => Promise<Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>>;
     openPath: (targetPath: string) => Promise<Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>>;
+    readFile?: (filePath: string) => Promise<ArrayBuffer | null>;
     detectOpticalDrives: () => Promise<Array<{ driveLetter: string; name: string; volumeName: string }>>;
     readOpticalDisc: () => Promise<{ success: boolean; detected: boolean; driveLetter?: string; volumeName?: string; count?: number; files?: Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>; message?: string }>;
     cancelOpticalDisc?: () => Promise<void>;

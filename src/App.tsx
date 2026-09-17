@@ -51,7 +51,7 @@ export const App: React.FC = () => {
   const [activeViewportId, setActiveViewportId] = useState<string>('vp_0');
   const [isMprActive, setIsMprActive] = useState<boolean>(false);
   const [mprInitialLayout, setMprInitialLayout] = useState<'2x2' | '3-view' | 'coronal-only' | 'axial-only' | 'sagittal-only'>('2x2');
-  const [syncMode, setSyncMode] = useState<SyncMode>('none');
+  const [syncMode, setSyncMode] = useState<SyncMode>('location');
 
   // Key image bookmarks
   const [bookmarks, setBookmarks] = useState<KeyImageBookmark[]>([]);
@@ -120,7 +120,8 @@ export const App: React.FC = () => {
       mipSlabThickness: 1,
       cinePlaying: false,
       cineFps: 15,
-      measurements: []
+      measurements: [],
+      isSyncLocked: true
     }));
   });
 
@@ -136,47 +137,199 @@ export const App: React.FC = () => {
       const sourceVp = prev.find(v => v.id === id);
       if (!sourceVp) return prev;
 
-      // Multi-Viewport Cross-Series Synchronized Scrolling
-      if (updates.instanceIndex !== undefined && syncMode !== 'none' && updates.instanceIndex !== sourceVp.instanceIndex) {
-        const targetInstIdx = updates.instanceIndex;
-        return prev.map(vp => {
-          if (vp.id === id) return { ...vp, ...updates };
+      const isSourceSyncLocked = sourceVp.isSyncLocked ?? true;
+      const isSyncActive = isSourceSyncLocked && syncMode !== 'none';
 
-          const vpStudy = studies.find(s => s.studyInstanceUid === vp.studyUid);
-          const vpSeries = vpStudy?.series.find(s => s.seriesInstanceUid === vp.seriesUid);
-          if (!vpSeries || vpSeries.instances.length <= 1) return vp;
+      // Helper to resolve study and series for any viewport
+      const resolveViewport = (vp: ViewportState) => {
+        let study = studies.find(s => s.studyInstanceUid === vp.studyUid);
+        if (!study && vp.seriesUid) {
+          study = studies.find(s => s.series.some(ser => ser.seriesInstanceUid === vp.seriesUid));
+        }
+        if (!study) {
+          study = studies.find(s => s.studyInstanceUid === activeStudyUid) || studies[0] || null;
+        }
 
-          if (syncMode === 'index') {
-            const syncedIdx = Math.min(vpSeries.instances.length - 1, targetInstIdx);
-            return { ...vp, instanceIndex: syncedIdx };
-          } else if (syncMode === 'location') {
-            const srcStudy = studies.find(s => s.studyInstanceUid === sourceVp.studyUid);
-            const srcSeries = srcStudy?.series.find(s => s.seriesInstanceUid === sourceVp.seriesUid);
-            const srcLoc = srcSeries?.instances[targetInstIdx]?.sliceLocation ?? srcSeries?.instances[targetInstIdx]?.imagePositionPatient?.[2];
-
-            if (srcLoc !== undefined) {
-              let closestIdx = 0;
-              let minDiff = Infinity;
-              vpSeries.instances.forEach((inst, idx) => {
-                const loc = inst.sliceLocation ?? inst.imagePositionPatient?.[2];
-                if (loc !== undefined) {
-                  const diff = Math.abs(loc - srcLoc);
-                  if (diff < minDiff) {
-                    minDiff = diff;
-                    closestIdx = idx;
-                  }
-                }
-              });
-              return { ...vp, instanceIndex: closestIdx };
+        let series: DicomSeries | null = null;
+        if (study) {
+          series = study.series.find(s => s.seriesInstanceUid === vp.seriesUid) || null;
+        }
+        if (!series && vp.seriesUid) {
+          for (const s of studies) {
+            const found = s.series.find(ser => ser.seriesInstanceUid === vp.seriesUid);
+            if (found) {
+              study = s;
+              series = found;
+              break;
             }
           }
-          return vp;
-        });
+        }
+        if (!series && study && study.series.length > 0) {
+          series = study.series[0];
+        }
+
+        return { study, series };
+      };
+
+      // Multi-Viewport Cross-Series Synchronized Scrolling & Pan/Zoom for locked viewports
+      if (isSyncActive) {
+        // 1. Synchronized Scrolling
+        if (updates.instanceIndex !== undefined && updates.instanceIndex !== sourceVp.instanceIndex) {
+          const targetInstIdx = updates.instanceIndex;
+          const { series: srcSeries } = resolveViewport(sourceVp);
+          const srcInst = srcSeries?.instances[targetInstIdx] || srcSeries?.instances[0];
+
+          return prev.map(vp => {
+            if (vp.id === id) return { ...vp, ...updates };
+            if ((vp.isSyncLocked ?? true) === false) return vp; // Exclude user-unlinked viewports
+
+            const { series: vpSeries } = resolveViewport(vp);
+            if (!vpSeries || vpSeries.instances.length <= 1) return vp;
+
+            // Scout / Topogram / Single-slice series should NEVER scroll with volumetric series
+            if (isTopogramOrSingleSlice(vpSeries)) return vp;
+
+            // Case A: Identical Series in both viewports (e.g. Bone Window vs Soft Tissue Window)
+            const vpSeriesUid = vp.seriesUid || vpSeries.seriesInstanceUid;
+            const srcSeriesUid = sourceVp.seriesUid || srcSeries?.seriesInstanceUid;
+            if (vpSeriesUid && srcSeriesUid && vpSeriesUid === srcSeriesUid) {
+              const clampedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, targetInstIdx));
+              return { ...vp, instanceIndex: clampedIdx };
+            }
+
+            // Case B: Cross-Series Sync
+            if (!srcSeries || srcSeries.instances.length <= 1) return vp;
+
+            const vpCurrentInst = vpSeries.instances[vp.instanceIndex || 0] || vpSeries.instances[0];
+
+            // Compute slice normal vectors from Image Orientation Patient (0020,0037) or anatomical planes
+            const getNormal = (inst?: DicomInstance, ser?: DicomSeries | null): [number, number, number] | null => {
+              const iop = inst?.imageOrientationPatient || ser?.instances[0]?.imageOrientationPatient;
+              if (iop && iop.length >= 6) {
+                const [rx, ry, rz, cx, cy, cz] = iop;
+                const nx = ry * cz - rz * cy;
+                const ny = rz * cx - rx * cz;
+                const nz = rx * cy - ry * cx;
+                const len = Math.hypot(nx, ny, nz);
+                if (len > 1e-5) return [nx / len, ny / len, nz / len];
+              }
+
+              // Fallback: estimate normal vector based on detected plane
+              const plane = detectAnatomicalPlane(ser?.seriesDescription || '', iop);
+              if (plane === 'AXIAL') return [0, 0, 1];
+              if (plane === 'CORONAL') return [0, 1, 0];
+              if (plane === 'SAGITTAL') return [1, 0, 0];
+
+              return null;
+            };
+
+            const srcNormal = getNormal(srcInst, srcSeries);
+            const vpNormal = getNormal(vpCurrentInst, vpSeries);
+
+            const srcPlane = detectAnatomicalPlane(srcSeries?.seriesDescription, srcInst?.imageOrientationPatient || srcSeries?.instances[0]?.imageOrientationPatient);
+            const vpPlane = detectAnatomicalPlane(vpSeries?.seriesDescription, vpCurrentInst?.imageOrientationPatient || vpSeries?.instances[0]?.imageOrientationPatient);
+
+            let isParallel = false;
+            if (srcNormal && vpNormal) {
+              const dot = Math.abs(srcNormal[0] * vpNormal[0] + srcNormal[1] * vpNormal[1] + srcNormal[2] * vpNormal[2]);
+              isParallel = dot >= 0.80; // Parallel planes (angle <= ~36 deg)
+            } else if (srcPlane && vpPlane) {
+              isParallel = srcPlane === vpPlane;
+            }
+
+            // CRITICAL: If planes are NOT parallel (e.g. Axial vs Sagittal, Axial vs Coronal),
+            // they MUST NOT scroll together! Return vp unchanged so it NEVER jumps to slice 0 or last slice!
+            if (!isParallel) {
+              return vp;
+            }
+
+            // Parallel planes: synchronize slice position
+            if (syncMode === 'index') {
+              const srcTotal = srcSeries.instances.length;
+              if (srcTotal <= 1) return vp;
+              const ratio = targetInstIdx / Math.max(1, srcTotal - 1);
+              const syncedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, Math.round(ratio * (vpSeries.instances.length - 1))));
+              return { ...vp, instanceIndex: syncedIdx };
+            } else {
+              // Location Sync: Physical millimeter projection along slice normal
+              if (srcInst?.imagePositionPatient && srcNormal) {
+                const srcPosAlongNormal =
+                  srcInst.imagePositionPatient[0] * srcNormal[0] +
+                  srcInst.imagePositionPatient[1] * srcNormal[1] +
+                  srcInst.imagePositionPatient[2] * srcNormal[2];
+
+                let closestIdx = -1;
+                let minDiff = Infinity;
+
+                vpSeries.instances.forEach((inst, idx) => {
+                  if (inst.imagePositionPatient) {
+                    const posAlongNormal =
+                      inst.imagePositionPatient[0] * srcNormal[0] +
+                      inst.imagePositionPatient[1] * srcNormal[1] +
+                      inst.imagePositionPatient[2] * srcNormal[2];
+                    const diff = Math.abs(posAlongNormal - srcPosAlongNormal);
+                    if (diff < minDiff) {
+                      minDiff = diff;
+                      closestIdx = idx;
+                    }
+                  }
+                });
+
+                if (closestIdx !== -1 && minDiff !== Infinity) {
+                  return { ...vp, instanceIndex: closestIdx };
+                }
+              }
+
+              // Fallback: sliceLocation tag
+              const srcLoc = srcInst?.sliceLocation;
+              if (srcLoc !== undefined) {
+                let closestIdx = -1;
+                let minDiff = Infinity;
+                vpSeries.instances.forEach((inst, idx) => {
+                  if (inst.sliceLocation !== undefined) {
+                    const diff = Math.abs(inst.sliceLocation - srcLoc);
+                    if (diff < minDiff) {
+                      minDiff = diff;
+                      closestIdx = idx;
+                    }
+                  }
+                });
+
+                if (closestIdx !== -1 && minDiff !== Infinity) {
+                  return { ...vp, instanceIndex: closestIdx };
+                }
+              }
+
+              // Fallback ONLY if parallel and srcSeries has multiple instances
+              const srcTotal = srcSeries.instances.length;
+              if (srcTotal > 1) {
+                const ratio = targetInstIdx / (srcTotal - 1);
+                const syncedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, Math.round(ratio * (vpSeries.instances.length - 1))));
+                return { ...vp, instanceIndex: syncedIdx };
+              }
+
+              return vp;
+            }
+          });
+        }
+
+        // 2. Synchronized Zoom and Pan
+        if (updates.zoom !== undefined || updates.pan !== undefined) {
+          return prev.map(vp => {
+            if (vp.id === id) return { ...vp, ...updates };
+            if ((vp.isSyncLocked ?? true) === false) return vp;
+            return {
+              ...vp,
+              ...(updates.zoom !== undefined ? { zoom: updates.zoom } : {}),
+              ...(updates.pan !== undefined ? { pan: updates.pan } : {})
+            };
+          });
+        }
       }
 
       return prev.map(vp => (vp.id === id ? { ...vp, ...updates } : vp));
     });
-  }, [syncMode, studies]);
+  }, [syncMode, studies, activeStudyUid]);
 
   const updateActiveViewport = useCallback((updates: Partial<ViewportState>) => {
     handleUpdateViewportState(activeViewportId, updates);
@@ -226,22 +379,52 @@ export const App: React.FC = () => {
   const handleSelectStudy = (study: DicomStudy) => {
     setActiveStudyUid(study.studyInstanceUid);
     const targetSer = findMainVolumetricSeries(study) || study.series[0];
-    if (targetSer) {
-      setActiveSeriesUid(targetSer.seriesInstanceUid);
-      const firstInst = targetSer.instances[0];
-      const isCt = targetSer.modality === 'CT' || (firstInst?.rescaleIntercept !== undefined && firstInst.rescaleIntercept < -100);
-      const defWc = isCt ? 40 : 128;
-      const defWw = isCt ? 400 : 256;
-      updateActiveViewport({
-        studyUid: study.studyInstanceUid,
-        seriesUid: targetSer.seriesInstanceUid,
+    const targetSerUid = targetSer ? targetSer.seriesInstanceUid : null;
+    setActiveSeriesUid(targetSerUid);
+
+    // 1. Reset tool, layout & display modes to fresh application defaults
+    setGridLayout('1x1');
+    setActiveViewportId('vp_0');
+    setIsMprActive(false);
+    setActiveTool('ww_wl');
+    setSyncMode('location');
+    setShowOverlays(true);
+
+    // 2. Clear old study bookmarks / key images
+    setBookmarks(prev => prev.filter(b => b.studyInstanceUid === study.studyInstanceUid));
+
+    // 3. Reset all 9 viewport slots cleanly:
+    // Only vp_0 is loaded with the new study's main series; vp_1 through vp_8 are completely cleared
+    const firstInst = targetSer?.instances[0];
+    const isCt = targetSer?.modality === 'CT' || (firstInst?.rescaleIntercept !== undefined && firstInst.rescaleIntercept < -100);
+    const defWc = firstInst?.windowCenter !== undefined ? firstInst.windowCenter : (isCt ? 40 : 128);
+    const defWw = firstInst?.windowWidth !== undefined ? firstInst.windowWidth : (isCt ? 400 : 256);
+
+    setViewports(() => {
+      return Array.from({ length: 9 }, (_, i) => ({
+        id: `vp_${i}`,
+        studyUid: i === 0 ? study.studyInstanceUid : null,
+        seriesUid: i === 0 ? targetSerUid : null,
         instanceIndex: 0,
-        windowCenter: firstInst?.windowCenter !== undefined ? firstInst.windowCenter : defWc,
-        windowWidth: firstInst?.windowWidth !== undefined ? firstInst.windowWidth : defWw,
+        windowCenter: i === 0 ? defWc : 40,
+        windowWidth: i === 0 ? defWw : 400,
         zoom: 1.0,
-        pan: { x: 0, y: 0 }
-      });
-    }
+        pan: { x: 0, y: 0 },
+        rotation: 0,
+        flipH: false,
+        flipV: false,
+        invert: false,
+        lut: 'grayscale',
+        filter: 'none',
+        mipMode: 'none',
+        mipSlabThickness: 1,
+        cinePlaying: false,
+        cineFps: 15,
+        measurements: [],
+        isSyncLocked: true,
+        showOverlays: true
+      }));
+    });
   };
 
   const handleSelectSeries = (series: DicomSeries) => {
@@ -257,6 +440,7 @@ export const App: React.FC = () => {
     const defWw = isCt ? 400 : 256;
 
     updateActiveViewport({
+      studyUid: series.studyInstanceUid || activeStudyUid,
       seriesUid: series.seriesInstanceUid,
       instanceIndex: 0,
       windowCenter: firstInst?.windowCenter !== undefined ? firstInst.windowCenter : defWc,
@@ -405,12 +589,13 @@ export const App: React.FC = () => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
-    setLoadingStatus({
-      loaded: 0,
-      total: fileArray.length,
-      percent: 0,
-      message: `Scanning ${fileArray.length} files...`
-    });
+    try {
+      setLoadingStatus({
+        loaded: 0,
+        total: fileArray.length,
+        percent: 0,
+        message: `Scanning ${fileArray.length} files...`
+      });
 
     const parsedInstances: DicomInstance[] = [];
     const batchSize = 10;
@@ -481,17 +666,101 @@ export const App: React.FC = () => {
       return;
     }
 
-    const newStudies = groupInstancesIntoStudies(parsedInstances, 'file', sourceDesc);
-    setStudies(prev => [...newStudies, ...prev]);
-    handleSelectStudy(newStudies[0]);
-    showNotification(`Loaded ${parsedInstances.length} DICOM files successfully.`);
+      const newStudies = groupInstancesIntoStudies(parsedInstances, 'file', sourceDesc);
+      setStudies(prev => [...newStudies, ...prev]);
+      handleSelectStudy(newStudies[0]);
+      showNotification(`Loaded ${parsedInstances.length} DICOM files successfully.`);
+    } catch (err: any) {
+      setLoadingStatus(null);
+      console.error('[CRASH SHIELD] processRawFiles error:', err);
+      showNotification('Some files could not be parsed. App recovered safely.');
+    }
   };
 
-  const handleOpenFile = () => {
+  // Process raw ArrayBuffers from Native Electron dialogs safely
+  const processRawBuffers = async (rawFiles: Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>, sourceDesc: string) => {
+    if (!rawFiles || rawFiles.length === 0) return;
+    try {
+      setLoadingStatus({
+        loaded: 0,
+        total: rawFiles.length,
+        percent: 0,
+        message: `Reading ${rawFiles.length} files...`
+      });
+
+      const parsedInstances: DicomInstance[] = [];
+      const batchSize = 20;
+
+      for (let i = 0; i < rawFiles.length; i += batchSize) {
+        const batch = rawFiles.slice(i, i + batchSize);
+        for (const item of batch) {
+          try {
+            if (isDicomBuffer(item.buffer)) {
+              const inst = parseDicomBufferFast(item.buffer, item.fileName, item.filePath);
+              if (inst) {
+                inst.filePath = item.filePath || item.fileName;
+                parsedInstances.push(inst);
+              }
+            }
+          } catch (_) {}
+        }
+
+        const loaded = Math.min(rawFiles.length, i + batchSize);
+        const percent = Math.round((loaded / rawFiles.length) * 100);
+        setLoadingStatus({
+          loaded,
+          total: rawFiles.length,
+          percent,
+          message: `Parsed ${parsedInstances.length} DICOM images (${percent}%)`
+        });
+
+        await new Promise(r => setTimeout(r, 0));
+      }
+
+      setLoadingStatus(null);
+      if (parsedInstances.length === 0) {
+        showNotification('No valid DICOM files found in selection.');
+        return;
+      }
+
+      const newStudies = groupInstancesIntoStudies(parsedInstances, 'file', sourceDesc);
+      setStudies(prev => [...newStudies, ...prev]);
+      handleSelectStudy(newStudies[0]);
+      showNotification(`Loaded ${parsedInstances.length} DICOM images successfully.`);
+    } catch (err: any) {
+      setLoadingStatus(null);
+      console.error('[CRASH SHIELD] Error reading raw buffers:', err);
+      showNotification('An error occurred during file reading. System recovered safely.');
+    }
+  };
+
+  const handleOpenFile = async () => {
+    if (window.electronAPI?.openDicomFiles) {
+      try {
+        const nativeFiles = await window.electronAPI.openDicomFiles();
+        if (nativeFiles && nativeFiles.length > 0) {
+          await processRawBuffers(nativeFiles, 'Local DICOM Files');
+          return;
+        }
+      } catch (err) {
+        console.warn('Native openDicomFiles error, falling back to input:', err);
+      }
+    }
     fileInputRef.current?.click();
   };
 
-  const handleOpenFolder = () => {
+  const handleOpenFolder = async () => {
+    if (window.electronAPI?.openDicomDirectory) {
+      try {
+        const nativeFiles = await window.electronAPI.openDicomDirectory();
+        if (nativeFiles && nativeFiles.length > 0) {
+          await processRawBuffers(nativeFiles, 'Local Study Folder');
+          return;
+        }
+      } catch (err) {
+        console.warn('Native openDicomDirectory error, falling back to input:', err);
+      }
+    }
     folderInputRef.current?.click();
   };
 
@@ -501,12 +770,45 @@ export const App: React.FC = () => {
     }
   };
 
-  // Global Window Drag & Drop for DICOM Files
+  // Global Window Drag & Drop for DICOM Files & Series
   const handleWindowDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     const files = e.dataTransfer.files;
-    if (!files || files.length === 0) return;
-    await processRawFiles(files, 'Drag & Drop Media');
+    if (files && files.length > 0) {
+      await processRawFiles(files, 'Drag & Drop Media');
+      return;
+    }
+
+    try {
+      const rawJson = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
+      if (rawJson) {
+        const parsed = JSON.parse(rawJson);
+        let targetStudy = parsed.study;
+        let targetSeries = parsed.series;
+
+        if (!targetStudy && parsed.studyUid) {
+          targetStudy = studies.find(s => s.studyInstanceUid === parsed.studyUid) || null;
+        }
+        if (!targetSeries && parsed.seriesUid) {
+          if (targetStudy) {
+            targetSeries = targetStudy.series.find((s: any) => s.seriesInstanceUid === parsed.seriesUid) || null;
+          } else {
+            for (const s of studies) {
+              const found = s.series.find(ser => ser.seriesInstanceUid === parsed.seriesUid);
+              if (found) {
+                targetSeries = found;
+                targetStudy = s;
+                break;
+              }
+            }
+          }
+        }
+
+        if (targetSeries && targetStudy) {
+          handleDropSeriesOnViewport(activeViewportId, targetSeries, targetStudy);
+        }
+      }
+    } catch (_) {}
   };
 
   // Toggle Fullscreen
@@ -667,6 +969,32 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentViewport, handleBookmarkCurrentSlice]);
 
+  const handleSetGrid = (newGrid: GridLayout) => {
+    setGridLayout(newGrid);
+    if (activeStudy && activeStudy.series.length > 1) {
+      setViewports(prev => {
+        return prev.map((vp, idx) => {
+          if (!vp.seriesUid && activeStudy.series[idx]) {
+            const ser = activeStudy.series[idx];
+            const firstInst = ser.instances[0];
+            const isCt = ser.modality === 'CT' || (firstInst?.rescaleIntercept !== undefined && firstInst.rescaleIntercept < -100);
+            return {
+              ...vp,
+              studyUid: activeStudy.studyInstanceUid,
+              seriesUid: ser.seriesInstanceUid,
+              instanceIndex: 0,
+              windowCenter: firstInst?.windowCenter !== undefined ? firstInst.windowCenter : (isCt ? 40 : 128),
+              windowWidth: firstInst?.windowWidth !== undefined ? firstInst.windowWidth : (isCt ? 400 : 256),
+              zoom: 1.0,
+              pan: { x: 0, y: 0 }
+            };
+          }
+          return vp;
+        });
+      });
+    }
+  };
+
   return (
     <div
       onDragOver={(e) => e.preventDefault()}
@@ -724,7 +1052,7 @@ export const App: React.FC = () => {
         onClearMeasurements={handleClearMeasurements}
         onSelectTool={setActiveTool}
         onApplyWindowPreset={handleApplyWindowPreset}
-        onSetGrid={setGridLayout}
+        onSetGrid={handleSetGrid}
         onRotate={handleRotate}
         onFlipH={handleFlipH}
         onFlipV={handleFlipV}
@@ -752,7 +1080,7 @@ export const App: React.FC = () => {
         onFlipV={handleFlipV}
         onInvert={handleInvert}
         currentGrid={gridLayout}
-        onSetGrid={setGridLayout}
+        onSetGrid={handleSetGrid}
         currentLut={currentViewport.lut || 'grayscale'}
         onSetLut={(lut) => updateActiveViewport({ lut })}
         currentFilter={currentViewport.filter || 'none'}

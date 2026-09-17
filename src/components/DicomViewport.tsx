@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { ChevronUp, ChevronDown } from 'lucide-react';
+import { ChevronUp, ChevronDown, Link2, Link2Off, Layers, Download } from 'lucide-react';
 import {
   DicomInstance,
   DicomSeries,
@@ -12,6 +12,7 @@ import {
 import { getOrDecodeInstancePixels } from '../services/dicomParser';
 import { getLutTable, classifyTissueFromHu } from '../services/lutService';
 import { applyImageFilter } from '../services/imageFilters';
+import { calculateCrossReferenceLine } from '../services/crossReferenceService';
 
 interface DicomViewportProps {
   viewportState: ViewportState;
@@ -19,6 +20,9 @@ interface DicomViewportProps {
   study: DicomStudy | null;
   activeTool: ToolType;
   isActive: boolean;
+  isSplitScreen?: boolean;
+  referenceSlice?: DicomInstance | null;
+  referenceSlices?: DicomInstance[];
   onActivate: () => void;
   onUpdateState: (updates: Partial<ViewportState>) => void;
   onAddMeasurement: (m: Measurement) => void;
@@ -32,6 +36,9 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
   study,
   activeTool,
   isActive,
+  isSplitScreen = false,
+  referenceSlice,
+  referenceSlices,
   onActivate,
   onUpdateState,
   onAddMeasurement,
@@ -42,6 +49,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  const [isDragOver, setIsDragOver] = useState(false);
 
   // Interaction State
   const [isDragging, setIsDragging] = useState(false);
@@ -692,8 +701,64 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       ctx.restore();
     }
 
+    // 3D DICOM Cross-Reference / Localizer Line (e.g. Axial slice plane projected onto Sagittal or Coronal view)
+    const activeRefs = (referenceSlices && referenceSlices.length > 0)
+      ? referenceSlices
+      : (referenceSlice ? [referenceSlice] : []);
+
+    if (currentInstance && (viewportState.isSyncLocked ?? true)) {
+      for (const refInst of activeRefs) {
+        if (!refInst || refInst.sopInstanceUid === currentInstance.sopInstanceUid) continue;
+        const refLine = calculateCrossReferenceLine(currentInstance, refInst);
+        if (refLine) {
+          const p1 = imageToScreenCoord(refLine.start.x, refLine.start.y);
+          const p2 = imageToScreenCoord(refLine.end.x, refLine.end.y);
+
+          ctx.save();
+
+          // 1. Dark background halo shadow for high visibility
+          ctx.beginPath();
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+          ctx.lineWidth = 3.5;
+          ctx.setLineDash([]);
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+
+          // 2. Bright dashed reference line
+          ctx.beginPath();
+          ctx.strokeStyle = refLine.color || '#f59e0b';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([8, 4]);
+          ctx.moveTo(p1.x, p1.y);
+          ctx.lineTo(p2.x, p2.y);
+          ctx.stroke();
+
+          // 3. End tick marks
+          ctx.setLineDash([]);
+          const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+          const tickLen = 6;
+          const perpX = Math.cos(angle + Math.PI / 2) * tickLen;
+          const perpY = Math.sin(angle + Math.PI / 2) * tickLen;
+
+          ctx.beginPath();
+          ctx.strokeStyle = refLine.color || '#f59e0b';
+          ctx.lineWidth = 1.5;
+          ctx.moveTo(p1.x - perpX, p1.y - perpY); ctx.lineTo(p1.x + perpX, p1.y + perpY);
+          ctx.moveTo(p2.x - perpX, p2.y - perpY); ctx.lineTo(p2.x + perpX, p2.y + perpY);
+          ctx.stroke();
+
+          // 4. Reference Badge Label
+          const badgeText = `${refLine.sourcePlane.slice(0, 3)} #${refLine.sourceSliceNumber}${refLine.sourceSliceLocation !== undefined ? ` (${refLine.sourceSliceLocation.toFixed(1)}mm)` : ''}`;
+          drawTextBadge(ctx, `📍 ${badgeText}`, Math.max(15, p1.x + 14), Math.max(15, p1.y - 10));
+
+          ctx.restore();
+        }
+      }
+    }
+
     ctx.restore();
-  }, [currentInstance, viewportState, drawingPoints, mousePos, instanceIndex, activeTool, imageToScreenCoord, hoveredHu, hoveredPixelCoord]);
+  }, [currentInstance, viewportState, drawingPoints, mousePos, instanceIndex, activeTool, imageToScreenCoord, hoveredHu, hoveredPixelCoord, referenceSlice, referenceSlices]);
 
   useEffect(() => {
     renderDicom();
@@ -941,12 +1006,88 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       onMouseUp={handleMouseUp}
       onWheel={handleWheel}
       onContextMenu={(e) => e.preventDefault()}
-      onDragOver={onDragOver}
-      onDrop={onDrop}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        setIsDragOver(true);
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setIsDragOver(false);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+        if (!isDragOver) setIsDragOver(true);
+        if (onDragOver) onDragOver(e);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        if (onDrop) onDrop(e);
+      }}
       className={`relative w-full h-full bg-black overflow-hidden select-none flex flex-col ${
         isActive ? 'viewport-active-border' : 'viewport-inactive-border'
       } ${getCursorClass()}`}
     >
+      {/* 0. Drag & Drop Visual Drop Zone Overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 bg-cyan-950/80 border-2 border-dashed border-cyan-400 backdrop-blur-sm flex flex-col items-center justify-center text-cyan-200 gap-3 pointer-events-none animate-fade-in">
+          <div className="w-14 h-14 rounded-full bg-cyan-500/20 border border-cyan-400 flex items-center justify-center shadow-[0_0_25px_rgba(6,182,212,0.6)]">
+            <Download className="w-7 h-7 text-cyan-300 animate-bounce" />
+          </div>
+          <div className="text-center">
+            <div className="text-sm font-bold text-white tracking-wide">Drop Series Here to Display</div>
+            <div className="text-xs text-cyan-300 font-medium">Release mouse to load this series in viewport</div>
+          </div>
+        </div>
+      )}
+
+      {/* 0.1 Selective Viewport Sync Toggle Button (Top-Center) */}
+      {isSplitScreen && (
+        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              const nextSync = !(viewportState.isSyncLocked ?? true);
+              onUpdateState({ isSyncLocked: nextSync });
+            }}
+            title={
+              (viewportState.isSyncLocked ?? true)
+                ? 'Synchronized: Click to unlink this viewport from others'
+                : 'Independent: Click to link and synchronize this viewport'
+            }
+            className={`px-2.5 py-1 rounded-full border text-[10.5px] font-semibold flex items-center gap-1.5 transition-all shadow-md backdrop-blur-md cursor-pointer ${
+              (viewportState.isSyncLocked ?? true)
+                ? 'bg-emerald-950/90 border-emerald-400 text-emerald-300 shadow-emerald-500/20 hover:bg-emerald-900 ring-1 ring-emerald-400/50'
+                : 'bg-slate-900/80 border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-400'
+            }`}
+          >
+            {(viewportState.isSyncLocked ?? true) ? (
+              <>
+                <Link2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
+                <span>Sync ON</span>
+              </>
+            ) : (
+              <>
+                <Link2Off className="w-3.5 h-3.5 text-slate-500" />
+                <span>Sync OFF</span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
+
+      {/* 0.2 Empty Viewport Placeholder when no series is assigned yet */}
+      {!currentInstance && !isDragOver && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 p-4 select-none pointer-events-none">
+          <Layers className="w-10 h-10 text-slate-600 mb-2 stroke-1 animate-pulse" />
+          <span className="text-xs font-semibold text-slate-400">Empty Viewport</span>
+          <span className="text-[10px] text-slate-500 mt-0.5">Drag & drop a series here, or click in sidebar</span>
+        </div>
+      )}
+
       {/* 1. Underlying DICOM Render Canvas */}
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 

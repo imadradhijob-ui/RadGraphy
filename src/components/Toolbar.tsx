@@ -1023,7 +1023,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                           else onToggleMpr();
                           setShowMprMenu(false);
                         }}
-                        title="2*2: عرض الشكل الثلاثي الأبعاد مع ثلاث مساقط"
+                        title="2x2: 3D Volume display with 3 Orthogonal Views (Axial, Coronal, Sagittal)"
                         className="px-2 py-0.5 rounded font-mono font-semibold bg-cyan-600/30 hover:bg-cyan-600 text-cyan-200 hover:text-white transition-colors"
                       >
                         2×2 (3D)
@@ -1034,7 +1034,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                           else onToggleMpr();
                           setShowMprMenu(false);
                         }}
-                        title="1*3: عرض ثلاث متسلسلات فقط"
+                        title="1x3: Tri-View display with 3 Orthogonal Views (Sagittal, Coronal, Axial)"
                         className="px-2 py-0.5 rounded font-mono font-semibold bg-slate-800 hover:bg-cyan-600 text-slate-300 hover:text-white transition-colors"
                       >
                         1×3

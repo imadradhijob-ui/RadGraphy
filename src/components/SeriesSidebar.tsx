@@ -287,10 +287,19 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
               <div
                 key={ser.seriesInstanceUid}
                 draggable
-                onDragStart={(e) => onDragSeriesStart(e, ser)}
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = 'copy';
+                  const data = JSON.stringify({
+                    studyUid: ser.studyInstanceUid,
+                    seriesUid: ser.seriesInstanceUid
+                  });
+                  e.dataTransfer.setData('application/json', data);
+                  e.dataTransfer.setData('text/plain', data);
+                  if (onDragSeriesStart) onDragSeriesStart(e, ser);
+                }}
                 onClick={() => onSelectSeries(ser)}
-                title={`${ser.seriesDescription || `Series ${ser.seriesNumber}`} (${ser.numberOfInstances} images)`}
-                className={`p-1.5 rounded-lg border transition-all cursor-pointer group select-none shadow-sm ${
+                title={`Click to view on active screen, or drag & drop onto any viewport\n${ser.seriesDescription || `Series ${ser.seriesNumber}`} (${ser.numberOfInstances} images)`}
+                className={`p-1.5 rounded-lg border transition-all cursor-pointer group select-none shadow-sm hover:ring-1 hover:ring-cyan-400/50 ${
                   isSelected
                     ? 'bg-gradient-to-r from-cyan-950/70 to-radiant-panel border-cyan-500 ring-1 ring-cyan-500/80 shadow-[0_0_10px_rgba(0,180,216,0.2)]'
                     : 'bg-radiant-panel/80 border-radiant-border hover:bg-radiant-card hover:border-slate-500'

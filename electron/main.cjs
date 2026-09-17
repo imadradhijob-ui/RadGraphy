@@ -4,6 +4,19 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const { testDicomEcho, searchDicomStudies, retrieveDicomStudy } = require('./dicomNetwork.cjs');
 
+// High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC)
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
+app.commandLine.appendSwitch('disable-http-cache');
+app.commandLine.appendSwitch('ignore-gpu-blacklist');
+
+// Process-level crash prevention
+process.on('uncaughtException', (err) => {
+  console.error('[CRASH SHIELD] Uncaught Exception in Main Process:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRASH SHIELD] Unhandled Rejection in Main Process:', reason);
+});
+
 let mainWindow = null;
 
 function createWindow() {
@@ -36,6 +49,28 @@ function createWindow() {
   mainWindow.setMenu(null);
   mainWindow.setAutoHideMenuBar(true);
   mainWindow.setMenuBarVisibility(false);
+
+  // WebContents crash protection & auto-recovery
+  mainWindow.webContents.on('render-process-gone', (event, details) => {
+    console.error('[CRASH SHIELD] Renderer process terminated:', details);
+    if (details.reason !== 'clean-exit') {
+      try {
+        dialog.showMessageBoxSync(mainWindow || undefined, {
+          type: 'warning',
+          title: 'RadNode Viewer - Safe Recovery',
+          message: 'The display process encountered an unexpected issue and was restored.',
+          detail: `Reason: ${details.reason || 'Memory or system constraint'}\nYour viewer has been restored safely.`
+        });
+      } catch (_) {}
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }
+  });
+
+  mainWindow.webContents.on('unresponsive', () => {
+    console.warn('[CRASH SHIELD] Renderer process is processing heavy imaging data...');
+  });
 
   const isDev = process.env.NODE_ENV === 'development' || (!app.isPackaged && !process.env.IS_PACKAGED);
 
@@ -148,6 +183,19 @@ ipcMain.handle('system:openPath', async (event, targetPath) => {
     }];
   }
   return [];
+});
+
+ipcMain.handle('fs:readFile', async (event, filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null;
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile() || stats.size < 8) return null;
+    const data = fs.readFileSync(filePath);
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  } catch (err) {
+    console.error('[CRASH SHIELD] Error reading file on demand:', filePath, err);
+    return null;
+  }
 });
 
 let isOpticalScanCancelled = false;

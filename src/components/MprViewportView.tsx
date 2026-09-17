@@ -827,7 +827,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                     }
                   }
                 }}
-                title="2*2: عرض الشكل الثلاثي الأبعاد مع ثلاث مساقط (Axial, Coronal, Sagittal)"
+                title="2x2: 3D Volume display with 3 Orthogonal Views (Axial, Coronal, Sagittal)"
                 className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
                   layout === '2x2' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 }`}
@@ -845,7 +845,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                     }
                   }
                 }}
-                title="1*3: عرض ثلاث متسلسلات متعامدة (Sagittal, Coronal, Axial)"
+                title="1x3: Tri-View display with 3 Orthogonal Views (Sagittal, Coronal, Axial)"
                 className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
                   layout === '3-view' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 }`}

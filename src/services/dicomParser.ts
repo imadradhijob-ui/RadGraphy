@@ -1036,28 +1036,55 @@ function decodeCompressedDicomSlice(
   return null;
 }
 
+// Memory Shield: LRU Decoded Slices Cache to prevent Out-Of-Memory on large 500-2000+ slice studies
+const MAX_DECODED_SLICES_IN_MEMORY = 80;
+const decodedInstancesLruQueue: DicomInstance[] = [];
+
+function registerDecodedInstanceInLru(instance: DicomInstance) {
+  const existingIdx = decodedInstancesLruQueue.indexOf(instance);
+  if (existingIdx !== -1) {
+    decodedInstancesLruQueue.splice(existingIdx, 1);
+  }
+  decodedInstancesLruQueue.push(instance);
+
+  // If memory threshold exceeded, prune oldest non-active slice pixel arrays
+  while (decodedInstancesLruQueue.length > MAX_DECODED_SLICES_IN_MEMORY) {
+    const oldest = decodedInstancesLruQueue.shift();
+    if (oldest && oldest !== instance && !oldest.customFramePixels) {
+      // Free uncompressed pixel data and float HU arrays to prevent V8 OOM
+      oldest.pixelData = undefined;
+      oldest.huData = undefined;
+    }
+  }
+}
+
 /**
  * On-demand lazy pixel decoder for a single slice
  * Executed in < 1ms when the slice is rendered on screen.
+ * Wrapped with LRU memory eviction and safe crash shield.
  */
 export function getOrDecodeInstancePixels(instance: DicomInstance): {
   pixelData: Int16Array | Uint16Array | Uint8Array;
   huData: Int16Array;
 } {
-  const numPixels = instance.rows * instance.columns;
+  const numPixels = (instance.rows || 512) * (instance.columns || 512);
 
   if (instance.pixelData && instance.huData && instance.huData.length === numPixels) {
+    registerDecodedInstanceInLru(instance);
     return {
       pixelData: instance.pixelData as any,
       huData: instance.huData as Int16Array
     };
   }
 
-  // 0. Custom pre-rendered frames (e.g. Dose Report SR 19 slides)
-  if (instance.customFramePixels && instance.customFramePixels.length > 0) {
-    const fIdx = instance.frameIndex || 0;
-    const rawFrame = instance.customFramePixels[fIdx] || instance.customFramePixels[0];
-    const huData = new Float32Array(rawFrame.length);
+  try {
+    registerDecodedInstanceInLru(instance);
+
+    // 0. Custom pre-rendered frames (e.g. Dose Report SR 19 slides)
+    if (instance.customFramePixels && instance.customFramePixels.length > 0) {
+      const fIdx = instance.frameIndex || 0;
+      const rawFrame = instance.customFramePixels[fIdx] || instance.customFramePixels[0];
+      const huData = new Float32Array(rawFrame.length);
     for (let i = 0; i < rawFrame.length; i++) {
       huData[i] = rawFrame[i];
     }
@@ -1255,6 +1282,19 @@ export function getOrDecodeInstancePixels(instance: DicomInstance): {
   instance.huData = huData;
 
   return { pixelData, huData: huData as any };
+  } catch (decodeErr) {
+    console.warn('[CRASH SHIELD] Safe fallback for corrupt slice:', instance.fileName, decodeErr);
+    const fallback = instance.bitsAllocated === 16
+      ? (instance.pixelRepresentation === 1 ? new Int16Array(numPixels) : new Uint16Array(numPixels))
+      : new Uint8Array(numPixels);
+    const huFallback = new Float32Array(numPixels);
+    instance.pixelData = fallback;
+    // @ts-ignore
+    instance.huData = huFallback;
+    instance.minPixelValue = 0;
+    instance.maxPixelValue = 255;
+    return { pixelData: fallback, huData: huFallback as any };
+  }
 }
 
 export function parseDicomBuffer(
