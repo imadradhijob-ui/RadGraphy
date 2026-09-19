@@ -716,34 +716,34 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
 
           ctx.save();
 
-          // 1. Dark background halo shadow for high visibility
+          // 1. Dark background halo shadow for high visibility (refined & subtle)
           ctx.beginPath();
-          ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
-          ctx.lineWidth = 3.5;
+          ctx.strokeStyle = 'rgba(0, 0, 0, 0.65)';
+          ctx.lineWidth = 2.0;
           ctx.setLineDash([]);
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
 
-          // 2. Bright dashed reference line
+          // 2. Bright dashed reference line (sleek 1px hairline)
           ctx.beginPath();
           ctx.strokeStyle = refLine.color || '#f59e0b';
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([8, 4]);
+          ctx.lineWidth = 1.0;
+          ctx.setLineDash([6, 3]);
           ctx.moveTo(p1.x, p1.y);
           ctx.lineTo(p2.x, p2.y);
           ctx.stroke();
 
-          // 3. End tick marks
+          // 3. End tick marks (refined 4px ticks)
           ctx.setLineDash([]);
           const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-          const tickLen = 6;
+          const tickLen = 4;
           const perpX = Math.cos(angle + Math.PI / 2) * tickLen;
           const perpY = Math.sin(angle + Math.PI / 2) * tickLen;
 
           ctx.beginPath();
           ctx.strokeStyle = refLine.color || '#f59e0b';
-          ctx.lineWidth = 1.5;
+          ctx.lineWidth = 1.0;
           ctx.moveTo(p1.x - perpX, p1.y - perpY); ctx.lineTo(p1.x + perpX, p1.y + perpY);
           ctx.moveTo(p2.x - perpX, p2.y - perpY); ctx.lineTo(p2.x + perpX, p2.y + perpY);
           ctx.stroke();
@@ -998,6 +998,42 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     }
   };
 
+  const renderSyncBadge = () => {
+    if (!isSplitScreen) return null;
+    const isLocked = viewportState.isSyncLocked ?? true;
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          onUpdateState({ isSyncLocked: !isLocked });
+        }}
+        title={
+          isLocked
+            ? 'Synchronized: Click to unlink this viewport from others'
+            : 'Independent: Click to link and synchronize this viewport'
+        }
+        className={`pointer-events-auto px-2 py-0.5 rounded border text-[10px] font-semibold flex items-center gap-1 transition-all shadow-md backdrop-blur-md cursor-pointer select-none ${
+          isLocked
+            ? 'bg-emerald-950/90 border-emerald-400/80 text-emerald-300 shadow-emerald-500/20 hover:bg-emerald-900 ring-1 ring-emerald-400/40'
+            : 'bg-slate-900/80 border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-400'
+        }`}
+      >
+        {isLocked ? (
+          <>
+            <Link2 className="w-3 h-3 text-emerald-400" />
+            <span>Sync ON</span>
+          </>
+        ) : (
+          <>
+            <Link2Off className="w-3 h-3 text-slate-500" />
+            <span>Sync OFF</span>
+          </>
+        )}
+      </button>
+    );
+  };
+
   return (
     <div
       ref={containerRef}
@@ -1043,39 +1079,10 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
         </div>
       )}
 
-      {/* 0.1 Selective Viewport Sync Toggle Button (Top-Center) */}
-      {isSplitScreen && (
-        <div className="absolute top-2.5 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              const nextSync = !(viewportState.isSyncLocked ?? true);
-              onUpdateState({ isSyncLocked: nextSync });
-            }}
-            title={
-              (viewportState.isSyncLocked ?? true)
-                ? 'Synchronized: Click to unlink this viewport from others'
-                : 'Independent: Click to link and synchronize this viewport'
-            }
-            className={`px-2.5 py-1 rounded-full border text-[10.5px] font-semibold flex items-center gap-1.5 transition-all shadow-md backdrop-blur-md cursor-pointer ${
-              (viewportState.isSyncLocked ?? true)
-                ? 'bg-emerald-950/90 border-emerald-400 text-emerald-300 shadow-emerald-500/20 hover:bg-emerald-900 ring-1 ring-emerald-400/50'
-                : 'bg-slate-900/80 border-slate-600 text-slate-400 hover:text-slate-200 hover:border-slate-400'
-            }`}
-          >
-            {(viewportState.isSyncLocked ?? true) ? (
-              <>
-                <Link2 className="w-3.5 h-3.5 text-emerald-400 animate-pulse" />
-                <span>Sync ON</span>
-              </>
-            ) : (
-              <>
-                <Link2Off className="w-3.5 h-3.5 text-slate-500" />
-                <span>Sync OFF</span>
-              </>
-            )}
-          </button>
+      {/* Sync Toggle Button when empty viewport */}
+      {!currentInstance && isSplitScreen && (
+        <div className="absolute bottom-2.5 left-3 z-30 pointer-events-auto">
+          {renderSyncBadge()}
         </div>
       )}
 
@@ -1124,8 +1131,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
 
           {/* Bottom-Left: Slice Position & Zoom */}
           <div className="absolute bottom-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10 pointer-events-none">
-            {/* Prominent High-Visibility Slide / Slice Number Badge */}
-            <div className="flex items-center gap-1.5 mb-1">
+            {/* Prominent High-Visibility Slide / Slice Number Badge & Sync Status */}
+            <div className="flex items-center gap-1.5 mb-1 pointer-events-auto">
               <span className="px-2 py-0.5 rounded bg-black/85 border border-amber-400 text-amber-300 font-mono font-bold text-xs shadow-lg backdrop-blur-sm">
                 Slice: {instanceIndex + 1} / {totalInstances}
               </span>
@@ -1134,6 +1141,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
                   #{currentInstance.instanceNumber}
                 </span>
               )}
+              {renderSyncBadge()}
             </div>
             <div>
               Loc: {currentInstance.sliceLocation !== undefined ? `${currentInstance.sliceLocation.toFixed(1)} mm` : '-'}
@@ -1165,10 +1173,11 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
 
       {/* Fallback permanent Slide Number Badge even when full HUD overlays are toggled off */}
       {currentInstance && !(viewportState.showOverlays ?? true) && (
-        <div className="absolute bottom-2.5 left-3 z-10 pointer-events-none">
+        <div className="absolute bottom-2.5 left-3 z-10 pointer-events-none flex items-center gap-1.5">
           <span className="px-2 py-0.5 rounded bg-black/85 border border-amber-400 text-amber-300 font-mono font-bold text-xs shadow-lg backdrop-blur-sm">
             Slice: {instanceIndex + 1} / {totalInstances}
           </span>
+          {renderSyncBadge()}
         </div>
       )}
 

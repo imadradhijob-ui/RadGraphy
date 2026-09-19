@@ -1,6 +1,6 @@
 import { Volume3D } from './mprEngine';
 
-export type Volume3dPresetId = 'bone' | 'angio' | 'skin' | 'mip3d' | 'dental' | 'endo';
+export type Volume3dPresetId = 'cinematic_bone' | 'bone' | 'brain' | 'angio' | 'skin' | 'dental' | 'mip3d' | 'endo';
 
 export interface Volume3dPreset {
   id: Volume3dPresetId;
@@ -20,6 +20,30 @@ export interface Volume3dPreset {
 }
 
 export const VOLUME_3D_PRESETS: Volume3dPreset[] = [
+  {
+    id: 'cinematic_bone',
+    name: 'Cinematic Skull & Bone (HD Porcelain)',
+    category: 'Cinematic Skeletal (Ultra-Gloss)',
+    minThreshold: 180,
+    maxThreshold: 1600,
+    specularPower: 64,
+    ambient: 0.20,
+    diffuse: 0.85,
+    opacityMultiplier: 0.95,
+    colorGrad: { r: 245, g: 238, b: 230 }
+  },
+  {
+    id: 'brain',
+    name: '3D Brain Tissue & Parenchyma (Neuro)',
+    category: 'Neuro / Brain Soft Tissue',
+    minThreshold: 22,
+    maxThreshold: 120,
+    specularPower: 24,
+    ambient: 0.32,
+    diffuse: 0.72,
+    opacityMultiplier: 0.88,
+    colorGrad: { r: 235, g: 195, b: 180 }
+  },
   {
     id: 'bone',
     name: '3D Bone & Skeleton (Ivory / Gold)',
@@ -171,14 +195,15 @@ export class VolumeRaycaster {
     const tfRange = Math.max(1, thresholdMax - thresholdMin);
     const tfMult = preset.opacityMultiplier;
     const minScreenDim = Math.min(width, height);
+    const baseScale = (minScreenDim * 0.82) * zoom;
 
     for (let py = 0; py < height; py += skipStep) {
       // Millimeters along screen Y from center
-      const sy = (((py - height / 2 - panY) / (minScreenDim * zoom)) * maxPhysDim);
+      const sy = ((py - height / 2 - panY) / baseScale) * maxPhysDim;
 
       for (let px = 0; px < width; px += skipStep) {
         // Millimeters along screen X from center
-        const sx = (((px - width / 2 - panX) / (minScreenDim * zoom)) * maxPhysDim);
+        const sx = ((px - width / 2 - panX) / baseScale) * maxPhysDim;
 
         let accumR = 0;
         let accumG = 0;
@@ -190,13 +215,15 @@ export class VolumeRaycaster {
         for (let s = -maxSteps / 2; s < maxSteps / 2; s += 1) {
           const sz = s * stepSize; // Millimeters along ray depth
 
-          // 3D rotation in TRUE ISOTROPIC MILLIMETER SPACE
-          const rx1 = sx * cosY - sz * sinY;
-          const rz1 = sx * sinY + sz * cosY;
+          // Camera Space: +X is Right, +Y is Up (-sy), +Z is Forward (sz)
+          const camX = sx;
+          const camY = -sy;
+          const camZ = sz;
 
-          const ry = sy * cosP - rz1 * sinP;
-          const rz = sy * sinP + rz1 * cosP;
-          const rx = rx1;
+          // Transform by canonical M = M_base * R_cam
+          const rx = cosY * camX + (sinY * sinP) * camY + (sinY * cosP) * camZ;
+          const ry = -sinY * camX + (cosY * sinP) * camY + (cosY * cosP) * camZ;
+          const rz = (-cosP) * camY + sinP * camZ;
 
           // Convert rotated physical millimeter position to voxel indices
           const vx = rx / spacingX + cx;
@@ -335,6 +362,16 @@ export class VolumeRaycaster {
                 baseR = Math.round(245 + t * 10);
                 baseG = Math.round(235 + t * 15);
                 baseB = Math.round(210 + t * 25);
+              } else if (preset.id === 'brain') {
+                // Natural anatomical brain tissue
+                baseR = Math.round(230 - (1 - t) * 20);
+                baseG = Math.round(195 - (1 - t) * 25);
+                baseB = Math.round(180 - (1 - t) * 30);
+              } else if (preset.id === 'cinematic_bone') {
+                // High-definition porcelain ivory bone
+                baseR = Math.round(245 - (1 - t) * 15);
+                baseG = Math.round(238 - (1 - t) * 20);
+                baseB = Math.round(230 - (1 - t) * 25);
               } else {
                 // RadiAnt Bone Gold & Ivory
                 baseR = Math.round(225 + t * 30);

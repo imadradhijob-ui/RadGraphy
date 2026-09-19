@@ -869,12 +869,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   <button
                     key={s.id}
                     type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSetSyncMode(s.id as SyncMode);
+                      setShowSyncMenu(false);
+                    }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
                       onSetSyncMode(s.id as SyncMode);
                       setShowSyncMenu(false);
                     }}
-                    className={`w-full px-2.5 py-1.5 text-left rounded hover:bg-radiant-hover flex items-center justify-between text-xs ${
+                    className={`w-full px-2.5 py-1.5 text-left rounded hover:bg-radiant-hover flex items-center justify-between text-xs cursor-pointer transition-colors ${
                       syncMode === s.id ? 'text-emerald-300 font-bold bg-emerald-950/40' : 'text-slate-200'
                     }`}
                   >

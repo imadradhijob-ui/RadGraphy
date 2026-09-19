@@ -313,14 +313,28 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
     );
   };
 
+  const [isModalFullscreen, setIsModalFullscreen] = useState<boolean>(false);
+
+  // Keyboard shortcut: Escape to close modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="flex-1 flex flex-col w-full h-full bg-radiant-darkest select-none text-slate-100">
-      <div className="h-12 bg-radiant-panel border-b border-radiant-border flex items-center justify-between px-3 text-xs gap-2 relative z-50 overflow-visible">
-        <div className="flex items-center gap-2.5 flex-shrink-0">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-cyan-600 to-blue-600 rounded font-bold text-white shadow-sm">
-            <Layers className="w-4 h-4 text-cyan-200" />
-            <span>3D / MPR</span>
-          </div>
+    <div className={`fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center ${isModalFullscreen ? 'p-0' : 'p-2 sm:p-3'} animate-in fade-in select-none`}>
+      <div className={`w-full h-full ${isModalFullscreen ? 'max-w-none max-h-none rounded-none border-0' : 'max-w-[1680px] max-h-[960px] rounded-xl border border-radiant-border'} bg-radiant-darkest shadow-2xl flex flex-col overflow-hidden text-slate-100`}>
+        <div className="h-12 bg-radiant-panel border-b border-radiant-border flex items-center justify-between px-3 text-xs gap-2 relative z-50 overflow-visible">
+          <div className="flex items-center gap-2.5 flex-shrink-0">
+            <div className="flex items-center gap-1.5 px-2.5 py-1 bg-gradient-to-r from-cyan-600 to-blue-600 rounded font-bold text-white shadow-sm">
+              <Layers className="w-4 h-4 text-cyan-200" />
+              <span>3D / MPR</span>
+            </div>
 
           <div className="flex items-center gap-2 text-slate-300 font-medium">
             {/* Interactive Series Selector Dropdown (Filters out SR and Scouts) */}
@@ -858,8 +872,15 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <button
+            onClick={() => setIsModalFullscreen(!isModalFullscreen)}
+            title={isModalFullscreen ? 'Restore Window Size' : 'Maximize to Fullscreen'}
+            className="p-1.5 bg-radiant-darkest hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border text-xs flex items-center gap-1 transition-colors cursor-pointer"
+          >
+            {isModalFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </button>
+          <button
             onClick={onClose}
-            className="flex items-center gap-1 px-3 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 rounded transition-colors font-bold text-xs"
+            className="flex items-center gap-1 px-3 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 rounded transition-colors font-bold text-xs cursor-pointer"
           >
             <X className="w-4 h-4" />
             <span>Close</span>
@@ -900,6 +921,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
             )}
           </>
         )}
+      </div>
       </div>
     </div>
   );
@@ -1349,7 +1371,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       const extH = Math.max(height / 2 + 100 / fitScale, displayHeight / fitScale);
 
       // Horizontal reference line (Full width spanning across the view like RadiAnt)
-      ctx.lineWidth = 1.3 / fitScale;
+      ctx.lineWidth = 1.0 / fitScale;
       ctx.strokeStyle = hColor;
       ctx.beginPath();
       ctx.moveTo(-extW, chY);
@@ -1359,10 +1381,10 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       // Horizontal line end handles
       ctx.fillStyle = hColor;
       ctx.beginPath();
-      ctx.arc(-width / 2, chY, 3.5 / fitScale, 0, 2 * Math.PI);
+      ctx.arc(-width / 2, chY, 2.8 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(width / 2, chY, 3.5 / fitScale, 0, 2 * Math.PI);
+      ctx.arc(width / 2, chY, 2.8 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
 
       // Left & Right anatomical labels directly on the reference line
@@ -1376,7 +1398,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       ctx.fillText(rightLabel, width / 2 - 7 / fitScale, chY);
 
       // Vertical reference line (Full height spanning across the view like RadiAnt)
-      ctx.lineWidth = 1.3 / fitScale;
+      ctx.lineWidth = 1.0 / fitScale;
       ctx.strokeStyle = vColor;
       ctx.beginPath();
       ctx.moveTo(chX, -extH);
@@ -1386,10 +1408,10 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
       // Top & bottom handles on vertical line
       ctx.fillStyle = vColor;
       ctx.beginPath();
-      ctx.arc(chX, -height / 2 + 8 / fitScale, 3.5 / fitScale, 0, 2 * Math.PI);
+      ctx.arc(chX, -height / 2 + 8 / fitScale, 2.8 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(chX, height / 2 - 8 / fitScale, 3.5 / fitScale, 0, 2 * Math.PI);
+      ctx.arc(chX, height / 2 - 8 / fitScale, 2.8 / fitScale, 0, 2 * Math.PI);
       ctx.fill();
 
       // Top & Bottom labels on vertical line

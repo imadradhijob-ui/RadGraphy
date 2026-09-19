@@ -16,6 +16,7 @@ import { ReportGeneratorModal } from './components/ReportGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
 import { BottomStatusBar } from './components/BottomStatusBar';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { DicomErrorBoundary } from './components/DicomErrorBoundary';
 import JSZip from 'jszip';
 
 import {
@@ -132,6 +133,184 @@ export const App: React.FC = () => {
   const activeInstanceIndex = currentViewport?.instanceIndex || 0;
   const activeInstance = activeSeries?.instances[activeInstanceIndex];
 
+  // Helper function to calculate cross-series synchronized positions across all viewports
+  const alignSynchronizedViewports = useCallback((
+    prev: ViewportState[],
+    sourceId: string,
+    targetInstIdx: number,
+    mode: SyncMode
+  ): ViewportState[] => {
+    if (mode === 'none') return prev;
+
+    const sourceVp = prev.find(v => v.id === sourceId);
+    if (!sourceVp) return prev;
+
+    const resolveViewport = (vp: ViewportState) => {
+      let study = studies.find(s => s.studyInstanceUid === vp.studyUid);
+      if (!study && vp.seriesUid) {
+        study = studies.find(s => s.series.some(ser => ser.seriesInstanceUid === vp.seriesUid));
+      }
+      if (!study) {
+        study = studies.find(s => s.studyInstanceUid === activeStudyUid) || studies[0] || null;
+      }
+
+      let series: DicomSeries | null = null;
+      if (study) {
+        series = study.series.find(s => s.seriesInstanceUid === vp.seriesUid) || null;
+      }
+      if (!series && vp.seriesUid) {
+        for (const s of studies) {
+          const found = s.series.find(ser => ser.seriesInstanceUid === vp.seriesUid);
+          if (found) {
+            study = s;
+            series = found;
+            break;
+          }
+        }
+      }
+      if (!series && study && study.series.length > 0) {
+        series = study.series[0];
+      }
+
+      return { study, series };
+    };
+
+    const { series: srcSeries } = resolveViewport(sourceVp);
+    const srcInst = srcSeries?.instances[targetInstIdx] || srcSeries?.instances[0];
+
+    return prev.map(vp => {
+      if (vp.id === sourceId) return vp;
+      if ((vp.isSyncLocked ?? true) === false) return vp; // Exclude user-unlinked viewports
+
+      const { series: vpSeries } = resolveViewport(vp);
+      if (!vpSeries || vpSeries.instances.length <= 1) return vp;
+
+      // Scout / Topogram / Single-slice series should NEVER scroll with volumetric series
+      if (isTopogramOrSingleSlice(vpSeries)) return vp;
+
+      // Case A: Identical Series in both viewports (e.g. Bone Window vs Soft Tissue Window)
+      const vpSeriesUid = vp.seriesUid || vpSeries.seriesInstanceUid;
+      const srcSeriesUid = sourceVp.seriesUid || srcSeries?.seriesInstanceUid;
+      if (vpSeriesUid && srcSeriesUid && vpSeriesUid === srcSeriesUid) {
+        const clampedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, targetInstIdx));
+        return { ...vp, instanceIndex: clampedIdx };
+      }
+
+      // Case B: Cross-Series Sync
+      if (!srcSeries || srcSeries.instances.length <= 1) return vp;
+
+      const vpCurrentInst = vpSeries.instances[vp.instanceIndex || 0] || vpSeries.instances[0];
+
+      // Compute slice normal vectors from Image Orientation Patient (0020,0037) or anatomical planes
+      const getNormal = (inst?: DicomInstance, ser?: DicomSeries | null): [number, number, number] | null => {
+        const iop = inst?.imageOrientationPatient || ser?.instances[0]?.imageOrientationPatient;
+        if (iop && iop.length >= 6) {
+          const [rx, ry, rz, cx, cy, cz] = iop;
+          const nx = ry * cz - rz * cy;
+          const ny = rz * cx - rx * cz;
+          const nz = rx * cy - ry * cx;
+          const len = Math.hypot(nx, ny, nz);
+          if (len > 1e-5) return [nx / len, ny / len, nz / len];
+        }
+
+        // Fallback: estimate normal vector based on detected plane
+        const plane = detectAnatomicalPlane(ser?.seriesDescription || '', iop);
+        if (plane === 'AXIAL') return [0, 0, 1];
+        if (plane === 'CORONAL') return [0, 1, 0];
+        if (plane === 'SAGITTAL') return [1, 0, 0];
+
+        return null;
+      };
+
+      const srcNormal = getNormal(srcInst, srcSeries);
+      const vpNormal = getNormal(vpCurrentInst, vpSeries);
+
+      const srcPlane = detectAnatomicalPlane(srcSeries?.seriesDescription, srcInst?.imageOrientationPatient || srcSeries?.instances[0]?.imageOrientationPatient);
+      const vpPlane = detectAnatomicalPlane(vpSeries?.seriesDescription, vpCurrentInst?.imageOrientationPatient || vpSeries?.instances[0]?.imageOrientationPatient);
+
+      let isParallel = false;
+      if (srcNormal && vpNormal) {
+        const dot = Math.abs(srcNormal[0] * vpNormal[0] + srcNormal[1] * vpNormal[1] + srcNormal[2] * vpNormal[2]);
+        isParallel = dot >= 0.80; // Parallel planes (angle <= ~36 deg)
+      } else if (srcPlane && vpPlane) {
+        isParallel = srcPlane === vpPlane;
+      }
+
+      // CRITICAL: If planes are NOT parallel (e.g. Axial vs Sagittal, Axial vs Coronal), do not scroll together!
+      if (!isParallel) {
+        return vp;
+      }
+
+      // Parallel planes: synchronize slice position
+      if (mode === 'index') {
+        const srcTotal = srcSeries.instances.length;
+        if (srcTotal <= 1) return vp;
+        const ratio = targetInstIdx / Math.max(1, srcTotal - 1);
+        const syncedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, Math.round(ratio * (vpSeries.instances.length - 1))));
+        return { ...vp, instanceIndex: syncedIdx };
+      } else {
+        // Location Sync: Physical millimeter projection along slice normal
+        if (srcInst?.imagePositionPatient && srcNormal) {
+          const srcPosAlongNormal =
+            srcInst.imagePositionPatient[0] * srcNormal[0] +
+            srcInst.imagePositionPatient[1] * srcNormal[1] +
+            srcInst.imagePositionPatient[2] * srcNormal[2];
+
+          let closestIdx = -1;
+          let minDiff = Infinity;
+
+          vpSeries.instances.forEach((inst, idx) => {
+            if (inst.imagePositionPatient) {
+              const posAlongNormal =
+                inst.imagePositionPatient[0] * srcNormal[0] +
+                inst.imagePositionPatient[1] * srcNormal[1] +
+                inst.imagePositionPatient[2] * srcNormal[2];
+              const diff = Math.abs(posAlongNormal - srcPosAlongNormal);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestIdx = idx;
+              }
+            }
+          });
+
+          if (closestIdx !== -1 && minDiff !== Infinity) {
+            return { ...vp, instanceIndex: closestIdx };
+          }
+        }
+
+        // Fallback: sliceLocation tag
+        const srcLoc = srcInst?.sliceLocation;
+        if (srcLoc !== undefined) {
+          let closestIdx = -1;
+          let minDiff = Infinity;
+          vpSeries.instances.forEach((inst, idx) => {
+            if (inst.sliceLocation !== undefined) {
+              const diff = Math.abs(inst.sliceLocation - srcLoc);
+              if (diff < minDiff) {
+                minDiff = diff;
+                closestIdx = idx;
+              }
+            }
+          });
+
+          if (closestIdx !== -1 && minDiff !== Infinity) {
+            return { ...vp, instanceIndex: closestIdx };
+          }
+        }
+
+        // Fallback ONLY if parallel and srcSeries has multiple instances
+        const srcTotal = srcSeries.instances.length;
+        if (srcTotal > 1) {
+          const ratio = targetInstIdx / (srcTotal - 1);
+          const syncedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, Math.round(ratio * (vpSeries.instances.length - 1))));
+          return { ...vp, instanceIndex: syncedIdx };
+        }
+
+        return vp;
+      }
+    });
+  }, [studies, activeStudyUid]);
+
   const handleUpdateViewportState = useCallback((id: string, updates: Partial<ViewportState>) => {
     setViewports(prev => {
       const sourceVp = prev.find(v => v.id === id);
@@ -140,183 +319,25 @@ export const App: React.FC = () => {
       const isSourceSyncLocked = sourceVp.isSyncLocked ?? true;
       const isSyncActive = isSourceSyncLocked && syncMode !== 'none';
 
-      // Helper to resolve study and series for any viewport
-      const resolveViewport = (vp: ViewportState) => {
-        let study = studies.find(s => s.studyInstanceUid === vp.studyUid);
-        if (!study && vp.seriesUid) {
-          study = studies.find(s => s.series.some(ser => ser.seriesInstanceUid === vp.seriesUid));
-        }
-        if (!study) {
-          study = studies.find(s => s.studyInstanceUid === activeStudyUid) || studies[0] || null;
-        }
-
-        let series: DicomSeries | null = null;
-        if (study) {
-          series = study.series.find(s => s.seriesInstanceUid === vp.seriesUid) || null;
-        }
-        if (!series && vp.seriesUid) {
-          for (const s of studies) {
-            const found = s.series.find(ser => ser.seriesInstanceUid === vp.seriesUid);
-            if (found) {
-              study = s;
-              series = found;
-              break;
-            }
-          }
-        }
-        if (!series && study && study.series.length > 0) {
-          series = study.series[0];
-        }
-
-        return { study, series };
-      };
+      // 1. Apply primary updates to source viewport
+      let updated = prev.map(vp => (vp.id === id ? { ...vp, ...updates } : vp));
 
       // Multi-Viewport Cross-Series Synchronized Scrolling & Pan/Zoom for locked viewports
       if (isSyncActive) {
-        // 1. Synchronized Scrolling
+        // Synchronized Scrolling
         if (updates.instanceIndex !== undefined && updates.instanceIndex !== sourceVp.instanceIndex) {
-          const targetInstIdx = updates.instanceIndex;
-          const { series: srcSeries } = resolveViewport(sourceVp);
-          const srcInst = srcSeries?.instances[targetInstIdx] || srcSeries?.instances[0];
-
-          return prev.map(vp => {
-            if (vp.id === id) return { ...vp, ...updates };
-            if ((vp.isSyncLocked ?? true) === false) return vp; // Exclude user-unlinked viewports
-
-            const { series: vpSeries } = resolveViewport(vp);
-            if (!vpSeries || vpSeries.instances.length <= 1) return vp;
-
-            // Scout / Topogram / Single-slice series should NEVER scroll with volumetric series
-            if (isTopogramOrSingleSlice(vpSeries)) return vp;
-
-            // Case A: Identical Series in both viewports (e.g. Bone Window vs Soft Tissue Window)
-            const vpSeriesUid = vp.seriesUid || vpSeries.seriesInstanceUid;
-            const srcSeriesUid = sourceVp.seriesUid || srcSeries?.seriesInstanceUid;
-            if (vpSeriesUid && srcSeriesUid && vpSeriesUid === srcSeriesUid) {
-              const clampedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, targetInstIdx));
-              return { ...vp, instanceIndex: clampedIdx };
-            }
-
-            // Case B: Cross-Series Sync
-            if (!srcSeries || srcSeries.instances.length <= 1) return vp;
-
-            const vpCurrentInst = vpSeries.instances[vp.instanceIndex || 0] || vpSeries.instances[0];
-
-            // Compute slice normal vectors from Image Orientation Patient (0020,0037) or anatomical planes
-            const getNormal = (inst?: DicomInstance, ser?: DicomSeries | null): [number, number, number] | null => {
-              const iop = inst?.imageOrientationPatient || ser?.instances[0]?.imageOrientationPatient;
-              if (iop && iop.length >= 6) {
-                const [rx, ry, rz, cx, cy, cz] = iop;
-                const nx = ry * cz - rz * cy;
-                const ny = rz * cx - rx * cz;
-                const nz = rx * cy - ry * cx;
-                const len = Math.hypot(nx, ny, nz);
-                if (len > 1e-5) return [nx / len, ny / len, nz / len];
-              }
-
-              // Fallback: estimate normal vector based on detected plane
-              const plane = detectAnatomicalPlane(ser?.seriesDescription || '', iop);
-              if (plane === 'AXIAL') return [0, 0, 1];
-              if (plane === 'CORONAL') return [0, 1, 0];
-              if (plane === 'SAGITTAL') return [1, 0, 0];
-
-              return null;
-            };
-
-            const srcNormal = getNormal(srcInst, srcSeries);
-            const vpNormal = getNormal(vpCurrentInst, vpSeries);
-
-            const srcPlane = detectAnatomicalPlane(srcSeries?.seriesDescription, srcInst?.imageOrientationPatient || srcSeries?.instances[0]?.imageOrientationPatient);
-            const vpPlane = detectAnatomicalPlane(vpSeries?.seriesDescription, vpCurrentInst?.imageOrientationPatient || vpSeries?.instances[0]?.imageOrientationPatient);
-
-            let isParallel = false;
-            if (srcNormal && vpNormal) {
-              const dot = Math.abs(srcNormal[0] * vpNormal[0] + srcNormal[1] * vpNormal[1] + srcNormal[2] * vpNormal[2]);
-              isParallel = dot >= 0.80; // Parallel planes (angle <= ~36 deg)
-            } else if (srcPlane && vpPlane) {
-              isParallel = srcPlane === vpPlane;
-            }
-
-            // CRITICAL: If planes are NOT parallel (e.g. Axial vs Sagittal, Axial vs Coronal),
-            // they MUST NOT scroll together! Return vp unchanged so it NEVER jumps to slice 0 or last slice!
-            if (!isParallel) {
-              return vp;
-            }
-
-            // Parallel planes: synchronize slice position
-            if (syncMode === 'index') {
-              const srcTotal = srcSeries.instances.length;
-              if (srcTotal <= 1) return vp;
-              const ratio = targetInstIdx / Math.max(1, srcTotal - 1);
-              const syncedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, Math.round(ratio * (vpSeries.instances.length - 1))));
-              return { ...vp, instanceIndex: syncedIdx };
-            } else {
-              // Location Sync: Physical millimeter projection along slice normal
-              if (srcInst?.imagePositionPatient && srcNormal) {
-                const srcPosAlongNormal =
-                  srcInst.imagePositionPatient[0] * srcNormal[0] +
-                  srcInst.imagePositionPatient[1] * srcNormal[1] +
-                  srcInst.imagePositionPatient[2] * srcNormal[2];
-
-                let closestIdx = -1;
-                let minDiff = Infinity;
-
-                vpSeries.instances.forEach((inst, idx) => {
-                  if (inst.imagePositionPatient) {
-                    const posAlongNormal =
-                      inst.imagePositionPatient[0] * srcNormal[0] +
-                      inst.imagePositionPatient[1] * srcNormal[1] +
-                      inst.imagePositionPatient[2] * srcNormal[2];
-                    const diff = Math.abs(posAlongNormal - srcPosAlongNormal);
-                    if (diff < minDiff) {
-                      minDiff = diff;
-                      closestIdx = idx;
-                    }
-                  }
-                });
-
-                if (closestIdx !== -1 && minDiff !== Infinity) {
-                  return { ...vp, instanceIndex: closestIdx };
-                }
-              }
-
-              // Fallback: sliceLocation tag
-              const srcLoc = srcInst?.sliceLocation;
-              if (srcLoc !== undefined) {
-                let closestIdx = -1;
-                let minDiff = Infinity;
-                vpSeries.instances.forEach((inst, idx) => {
-                  if (inst.sliceLocation !== undefined) {
-                    const diff = Math.abs(inst.sliceLocation - srcLoc);
-                    if (diff < minDiff) {
-                      minDiff = diff;
-                      closestIdx = idx;
-                    }
-                  }
-                });
-
-                if (closestIdx !== -1 && minDiff !== Infinity) {
-                  return { ...vp, instanceIndex: closestIdx };
-                }
-              }
-
-              // Fallback ONLY if parallel and srcSeries has multiple instances
-              const srcTotal = srcSeries.instances.length;
-              if (srcTotal > 1) {
-                const ratio = targetInstIdx / (srcTotal - 1);
-                const syncedIdx = Math.max(0, Math.min(vpSeries.instances.length - 1, Math.round(ratio * (vpSeries.instances.length - 1))));
-                return { ...vp, instanceIndex: syncedIdx };
-              }
-
-              return vp;
-            }
-          });
+          updated = alignSynchronizedViewports(
+            updated,
+            id,
+            updates.instanceIndex,
+            syncMode
+          );
         }
 
-        // 2. Synchronized Zoom and Pan
+        // Synchronized Zoom and Pan
         if (updates.zoom !== undefined || updates.pan !== undefined) {
-          return prev.map(vp => {
-            if (vp.id === id) return { ...vp, ...updates };
+          updated = updated.map(vp => {
+            if (vp.id === id) return vp;
             if ((vp.isSyncLocked ?? true) === false) return vp;
             return {
               ...vp,
@@ -327,9 +348,9 @@ export const App: React.FC = () => {
         }
       }
 
-      return prev.map(vp => (vp.id === id ? { ...vp, ...updates } : vp));
+      return updated;
     });
-  }, [syncMode, studies, activeStudyUid]);
+  }, [syncMode, alignSynchronizedViewports]);
 
   const updateActiveViewport = useCallback((updates: Partial<ViewportState>) => {
     handleUpdateViewportState(activeViewportId, updates);
@@ -995,6 +1016,79 @@ export const App: React.FC = () => {
     }
   };
 
+  const handleSetSyncMode = useCallback((newMode: SyncMode) => {
+    setSyncMode(newMode);
+
+    if (newMode === 'none') {
+      showNotification('Multi-viewport synchronization disabled (independent scrolling)');
+      return;
+    }
+
+    if (gridLayout === '1x1') {
+      if (activeStudy && activeStudy.series.length > 1) {
+        // Automatically switch to 1x2 and populate the second viewport with the second series
+        setGridLayout('1x2');
+        setViewports(prev => {
+          const secondSeries = activeStudy.series[1];
+          const firstInst = secondSeries?.instances[0];
+          const isCt = secondSeries?.modality === 'CT' || (firstInst?.rescaleIntercept !== undefined && firstInst.rescaleIntercept < -100);
+
+          const updated = prev.map((vp, idx) => {
+            if (idx === 1 && (!vp.seriesUid || vp.seriesUid === activeSeriesUid)) {
+              return {
+                ...vp,
+                studyUid: activeStudy.studyInstanceUid,
+                seriesUid: secondSeries.seriesInstanceUid,
+                instanceIndex: 0,
+                windowCenter: firstInst?.windowCenter !== undefined ? firstInst.windowCenter : (isCt ? 40 : 128),
+                windowWidth: firstInst?.windowWidth !== undefined ? firstInst.windowWidth : (isCt ? 400 : 256),
+                zoom: 1.0,
+                pan: { x: 0, y: 0 },
+                isSyncLocked: true
+              };
+            }
+            return vp;
+          });
+
+          return alignSynchronizedViewports(
+            updated,
+            activeViewportId,
+            currentViewport.instanceIndex,
+            newMode
+          );
+        });
+
+        showNotification(
+          newMode === 'location'
+            ? '🔗 Sync by Z-Location enabled: Switched layout to 1x2 and synchronized parallel series!'
+            : '🔗 Sync by Slice Index enabled: Switched layout to 1x2 and synchronized series!'
+        );
+        return;
+      } else {
+        showNotification(
+          '🔗 Synchronized scrolling enabled! Switch grid to 1x2 or 2x2 and open another series to compare.'
+        );
+        return;
+      }
+    }
+
+    // Grid is already multi-viewport: immediately align all linked viewports!
+    setViewports(prev =>
+      alignSynchronizedViewports(
+        prev,
+        activeViewportId,
+        currentViewport.instanceIndex,
+        newMode
+      )
+    );
+
+    showNotification(
+      newMode === 'location'
+        ? '🔗 Sync by Z-Location (mm) active: Aligned all parallel series.'
+        : '🔗 Sync by Slice Index active: Aligned all viewports.'
+    );
+  }, [gridLayout, activeStudy, activeSeriesUid, activeViewportId, currentViewport.instanceIndex, alignSynchronizedViewports]);
+
   return (
     <div
       onDragOver={(e) => e.preventDefault()}
@@ -1086,7 +1180,7 @@ export const App: React.FC = () => {
         currentFilter={currentViewport.filter || 'none'}
         onSetFilter={(filter: ImageFilterType) => updateActiveViewport({ filter })}
         syncMode={syncMode}
-        onSetSyncMode={setSyncMode}
+        onSetSyncMode={handleSetSyncMode}
         currentMipMode={currentViewport.mipMode || 'none'}
         currentMipSlab={currentViewport.mipSlabThickness || 1}
         onSetMip={(mode, slab) => updateActiveViewport({ mipMode: mode, mipSlabThickness: slab })}
@@ -1134,38 +1228,17 @@ export const App: React.FC = () => {
 
         {/* Center Canvas Workspace */}
         <main className="flex-1 flex flex-col bg-black overflow-hidden relative">
-          {isMprActive ? (
-            <MprViewportView
-              series={activeSeries}
-              study={activeStudy}
-              initialLayout={mprInitialLayout}
-              onClose={() => setIsMprActive(false)}
-              onSelectSeries={handleSelectSeries}
-              activeTool={activeTool}
-              onSelectTool={setActiveTool}
-              windowCenter={currentViewport.windowCenter}
-              windowWidth={currentViewport.windowWidth}
-              onUpdateWindowing={(wc, ww) => updateActiveViewport({ windowCenter: wc, windowWidth: ww })}
-              lut={currentViewport.lut || 'grayscale'}
-              onSetLut={(lut) => updateActiveViewport({ lut })}
-              invert={currentViewport.invert || false}
-              onToggleInvert={handleInvert}
-              showOverlays={showOverlays}
-              onToggleOverlays={handleToggleOverlays}
-            />
-          ) : (
-            <ViewportGrid
-              gridLayout={gridLayout}
-              viewports={viewports}
-              activeViewportId={activeViewportId}
-              activeTool={activeTool}
-              studies={studies}
-              onActivateViewport={setActiveViewportId}
-              onUpdateViewportState={handleUpdateViewportState}
-              onAddMeasurement={handleAddMeasurement}
-              onDropSeriesOnViewport={handleDropSeriesOnViewport}
-            />
-          )}
+          <ViewportGrid
+            gridLayout={gridLayout}
+            viewports={viewports}
+            activeViewportId={activeViewportId}
+            activeTool={activeTool}
+            studies={studies}
+            onActivateViewport={setActiveViewportId}
+            onUpdateViewportState={handleUpdateViewportState}
+            onAddMeasurement={handleAddMeasurement}
+            onDropSeriesOnViewport={handleDropSeriesOnViewport}
+          />
 
           {/* High-Tech Medical Telemetry Bottom Status Bar */}
           <BottomStatusBar
@@ -1283,12 +1356,73 @@ export const App: React.FC = () => {
         onClose={() => setIsAboutModalOpen(false)}
       />
 
-      <Volume3dModal
-        isOpen={is3dModalOpen}
-        onClose={() => setIs3dModalOpen(false)}
-        series={activeSeries}
-        study={activeStudy}
-      />
+      {/* 3D MPR Multi-Planar Reconstruction Independent Screen / Modal */}
+      {isMprActive && (
+        <DicomErrorBoundary
+          fallbackMessage="3D MPR Display Recovery"
+          onReset={() => setIsMprActive(false)}
+        >
+          {(() => {
+            const currentSeries = activeStudy?.series.find(s => s.seriesInstanceUid === currentViewport?.seriesUid) || activeSeries;
+            const resolvedMprSeries = (currentSeries && isEligibleForMpr(currentSeries))
+              ? currentSeries
+              : (findMainVolumetricSeries(activeStudy) || currentSeries || activeSeries);
+
+            return (
+              <MprViewportView
+                series={resolvedMprSeries}
+                study={activeStudy}
+                initialLayout={mprInitialLayout}
+                onClose={() => setIsMprActive(false)}
+                onSelectSeries={handleSelectSeries}
+                activeTool={activeTool}
+                onSelectTool={setActiveTool}
+                windowCenter={currentViewport.windowCenter}
+                windowWidth={currentViewport.windowWidth}
+                onUpdateWindowing={(wc, ww) => updateActiveViewport({ windowCenter: wc, windowWidth: ww })}
+                lut={currentViewport.lut || 'grayscale'}
+                onSetLut={(lut) => updateActiveViewport({ lut })}
+                invert={currentViewport.invert || false}
+                onToggleInvert={handleInvert}
+                showOverlays={showOverlays}
+                onToggleOverlays={handleToggleOverlays}
+              />
+            );
+          })()}
+        </DicomErrorBoundary>
+      )}
+
+      {/* 3D Volume Raymarching Modal */}
+      {is3dModalOpen && (
+        <DicomErrorBoundary
+          fallbackMessage="3D Volume Rendering Recovery"
+          onReset={() => setIs3dModalOpen(false)}
+        >
+          {(() => {
+            const mainVolumetric = findMainVolumetricSeries(activeStudy);
+            const vpSeries = activeStudy?.series.find(s => s.seriesInstanceUid === currentViewport?.seriesUid);
+            
+            // Prioritize true volumetric series (>= 4 slices, not scout/localizer)
+            const isVpVolumetric = vpSeries && vpSeries.instances.length >= 4 && !isTopogramOrSingleSlice(vpSeries);
+            const isActiveVolumetric = activeSeries && activeSeries.instances.length >= 4 && !isTopogramOrSingleSlice(activeSeries);
+
+            const resolved3dSeries = isVpVolumetric
+              ? vpSeries
+              : (isActiveVolumetric
+                ? activeSeries
+                : (mainVolumetric || vpSeries || activeSeries));
+
+            return (
+              <Volume3dModal
+                isOpen={is3dModalOpen}
+                onClose={() => setIs3dModalOpen(false)}
+                series={resolved3dSeries}
+                study={activeStudy}
+              />
+            );
+          })()}
+        </DicomErrorBoundary>
+      )}
 
       <ShortcutsModal
         isOpen={isShortcutsModalOpen}

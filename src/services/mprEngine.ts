@@ -113,21 +113,14 @@ export function detectAnatomicalPlane(
 export function isTopogramOrSingleSlice(series?: DicomSeries | null): boolean {
   if (!series || !series.instances || series.instances.length <= 1) return true;
   const mod = (series.modality || '').toUpperCase();
-  if (mod === 'SR' || mod === 'PR' || mod === 'KO' || mod === 'DOC' || mod === 'OT') return true;
+  // Exclude non-image structured reports and presentation states
+  if (mod === 'SR' || mod === 'PR' || mod === 'KO' || mod === 'DOC') return true;
+  if (series.instances.some((i: any) => i.customFramePixels)) return true;
   
   const d = (series.seriesDescription || '').toLowerCase().trim();
-  if (
-    d.includes('dose report') ||
-    d.includes('structured report') ||
-    d.includes('radiation dose') ||
-    d.includes('ct dose') ||
-    d.includes('protocol')
-  ) {
-    return true;
-  }
 
-  // Only reject scouts/topograms if they have fewer than 3 slices.
-  // Multi-slice MRI scouts (like Siemens AASpine_Scout with 21 slices) are valid 3D volumes.
+  // ONLY reject scouts, localizers, protocol sheets, and dose reports if they have fewer than 3 slices.
+  // Real volumetric series (e.g. 30+ slices titled "Brain Protocol" or "Head Routine") are 100% valid 3D volumes.
   if (series.instances.length < 3) {
     return (
       d.includes('topogram') ||
@@ -137,7 +130,10 @@ export function isTopogramOrSingleSlice(series?: DicomSeries | null): boolean {
       d.includes('surv') ||
       d.includes('scanogram') ||
       d.includes('pilot') ||
-      d.includes('topo')
+      d.includes('topo') ||
+      d.includes('protocol') ||
+      d.includes('dose') ||
+      d.includes('report')
     );
   }
 
@@ -154,7 +150,7 @@ export function isEligibleForMpr(series?: DicomSeries | null): boolean {
   const mod = (series.modality || '').toUpperCase();
   if (mod === 'SR' || mod === 'PR' || mod === 'KO' || mod === 'DOC') return false;
   if (series.instances.some((i) => (i as any).customFramePixels)) return false;
-  const first = series.instances[0];
+  const first = series.instances.find(i => i.rows && i.columns) || series.instances[0];
   if (!first || !first.rows || !first.columns || first.rows < 16 || first.columns < 16) return false;
   return true;
 }
@@ -168,7 +164,16 @@ export function findMainVolumetricSeries(study?: DicomStudy | null): DicomSeries
   if (!study || !study.series || study.series.length === 0) return null;
 
   // 1. Strictly filter eligible volumetric series
-  const candidates = study.series.filter((s) => isEligibleForMpr(s));
+  let candidates = study.series.filter((s) => isEligibleForMpr(s));
+
+  if (candidates.length === 0) {
+    // Robust Fallback: Any series with >= 2 slices that is not non-image report
+    candidates = study.series.filter(s => {
+      if (!s.instances || s.instances.length < 2) return false;
+      const m = (s.modality || '').toUpperCase();
+      return m !== 'SR' && m !== 'PR' && m !== 'DOC';
+    });
+  }
 
   if (candidates.length === 0) {
     return null;
@@ -200,7 +205,10 @@ export class MprEngine {
    * Sorts slices strictly by their geometric projection along the slice normal vector.
    */
   static buildVolume(series: DicomSeries): Volume3D | null {
-    if (!isEligibleForMpr(series)) return null;
+    if (!series || !series.instances || series.instances.length < 2) return null;
+    const mod = (series.modality || '').toUpperCase();
+    if (mod === 'SR' || mod === 'PR' || mod === 'KO' || mod === 'DOC') return null;
+    if (series.instances.some((i: any) => i.customFramePixels)) return null;
 
     // ── STEP 0: Filter to single homogeneous volumetric acquisition ─────────
     let insts = [...series.instances];
@@ -209,14 +217,18 @@ export class MprEngine {
     // 1. Dominant dimension (rows × columns) - filters out scouts, dose reports, localizers
     const dimCounts = new Map<string, number>();
     for (const i of insts) {
-      const k = `${i.rows}x${i.columns}`;
-      dimCounts.set(k, (dimCounts.get(k) || 0) + 1);
+      if (i.rows && i.columns) {
+        const k = `${i.rows}x${i.columns}`;
+        dimCounts.set(k, (dimCounts.get(k) || 0) + 1);
+      }
     }
     let bestDim = '', bestDimCnt = 0;
     for (const [k, c] of dimCounts) {
       if (c > bestDimCnt) { bestDimCnt = c; bestDim = k; }
     }
-    insts = insts.filter(i => `${i.rows}x${i.columns}` === bestDim);
+    if (bestDim && bestDimCnt >= 2) {
+      insts = insts.filter(i => `${i.rows}x${i.columns}` === bestDim);
+    }
 
     // 2. Multi-echo filtering: filter by EchoNumber (0018,0086) if multiple
     const echoCounts = new Map<number, number>();
@@ -234,7 +246,6 @@ export class MprEngine {
     }
 
     // 3. Multi-echo filtering: filter by EchoTime TE (0018,0081)
-    // In many MRI scans EchoNumber is absent, but dual echo has distinct TEs (e.g. 15ms vs 90ms)
     const teCounts = new Map<number, number>();
     for (const i of insts) {
       if (i.echoTime !== undefined && i.echoTime > 0) {
@@ -251,28 +262,6 @@ export class MprEngine {
         if (i.echoTime === undefined || i.echoTime <= 0) return true;
         return Math.abs(i.echoTime - domTe) < 1.0;
       });
-    }
-
-    // 4. Acquisition number filtering (0020,0012)
-    const acqCounts = new Map<number, number>();
-    for (const i of insts) {
-      if (i.acquisitionNumber !== undefined) {
-        acqCounts.set(i.acquisitionNumber, (acqCounts.get(i.acquisitionNumber) || 0) + 1);
-      }
-    }
-    if (acqCounts.size > 1) {
-      let domAcq = 1, domAcqCnt = 0;
-      for (const [acq, c] of acqCounts) {
-        if (c > domAcqCnt) { domAcqCnt = c; domAcq = acq; }
-      }
-      insts = insts.filter(i => (i.acquisitionNumber ?? domAcq) === domAcq);
-    }
-
-    // 5. Prefer ORIGINAL over DERIVED (removes secondary reformats)
-    const hasOrig = insts.some(i => i.imageType?.toUpperCase().includes('ORIGINAL'));
-    if (hasOrig) {
-      const origOnly = insts.filter(i => !i.imageType?.toUpperCase().includes('DERIVED'));
-      if (origOnly.length >= 2) insts = origOnly;
     }
 
     if (insts.length < 2) return null;
@@ -314,6 +303,9 @@ export class MprEngine {
       dominantPlane = 'CORONAL';
     } else if (descPlane === 'AXIAL' && axCount > 0) {
       dominantPlane = 'AXIAL';
+    } else if ((series.modality || '').toUpperCase() === 'CT' && descPlane !== 'CORONAL' && descPlane !== 'SAGITTAL') {
+      // Standard CT Head scans (even with gantry tilt where iny/inz vary) are inherently AXIAL acquisitions
+      dominantPlane = 'AXIAL';
     } else {
       if (sagCount >= corCount && sagCount >= axCount) dominantPlane = 'SAGITTAL';
       else if (corCount >= sagCount && corCount >= axCount) dominantPlane = 'CORONAL';
@@ -321,9 +313,9 @@ export class MprEngine {
     }
 
     // Filter to instances matching the dominant acquisition plane
-    insts = insts.filter(inst => {
+    const planeInsts = insts.filter(inst => {
       const iop = inst.imageOrientationPatient;
-      if (!iop || iop.length < 6) return dominantPlane === 'AXIAL';
+      if (!iop || iop.length < 6) return true;
       const [irx, iry, irz, icx, icy, icz] = iop;
       const inx = iry * icz - irz * icy;
       const iny = irz * icx - irx * icz;
@@ -336,7 +328,9 @@ export class MprEngine {
       return absZ >= absX && absZ >= absY;
     });
 
-    if (insts.length < 2) return null;
+    if (planeInsts.length >= 2) {
+      insts = planeInsts;
+    }
 
     const isCoronalAcq = dominantPlane === 'CORONAL';
     const isSagittalAcq = dominantPlane === 'SAGITTAL';
@@ -352,21 +346,49 @@ export class MprEngine {
     let nx = ry * cz - rz * cy;
     let ny = rz * cx - rx * cz;
     let nz = rx * cy - ry * cx;
-    const nLen = Math.hypot(nx, ny, nz) || 1;
-    nx /= nLen; ny /= nLen; nz /= nLen;
+    const nLen = Math.hypot(nx, ny, nz);
+    if (nLen > 1e-4) {
+      nx /= nLen; ny /= nLen; nz /= nLen;
+    } else {
+      if (dominantPlane === 'CORONAL') { nx = 0; ny = 1; nz = 0; }
+      else if (dominantPlane === 'SAGITTAL') { nx = 1; ny = 0; nz = 0; }
+      else { nx = 0; ny = 0; nz = 1; }
+    }
 
     // ── STEP 3: Project slice positions onto slice normal ───────────────────
     type SM = { inst: DicomInstance; dist: number };
     const sm: SM[] = insts.map((inst, idx) => {
       const p = inst.imagePositionPatient;
-      let dist = 0;
-      if (p && p.length >= 3) {
+      let dist: number;
+      if (p && p.length >= 3 && isFinite(p[0]) && isFinite(p[1]) && isFinite(p[2])) {
         dist = p[0] * nx + p[1] * ny + p[2] * nz;
       } else {
-        dist = inst.sliceLocation !== undefined ? inst.sliceLocation : (inst.instanceNumber ?? idx);
+        dist = (inst.sliceLocation !== undefined && isFinite(inst.sliceLocation))
+          ? inst.sliceLocation
+          : (((inst.instanceNumber !== undefined && isFinite(inst.instanceNumber) && inst.instanceNumber !== 0)
+              ? inst.instanceNumber
+              : (idx + 1)) * (inst.sliceThickness || 1.0));
       }
+      if (!isFinite(dist)) dist = idx * 1.0;
       return { inst, dist };
     });
+
+    const allSameDist = sm.length > 1 && sm.every(m => Math.abs(m.dist - sm[0].dist) < 1e-4);
+    if (allSameDist) {
+      sm.forEach((m, idx) => {
+        const instNum = (m.inst.instanceNumber !== undefined && isFinite(m.inst.instanceNumber) && m.inst.instanceNumber !== 0)
+          ? m.inst.instanceNumber
+          : (idx + 1);
+        m.dist = instNum * (m.inst.sliceThickness && m.inst.sliceThickness > 0 ? m.inst.sliceThickness : 1.0);
+      });
+    }
+
+    const stillSameDist = sm.length > 1 && sm.every(m => Math.abs(m.dist - sm[0].dist) < 1e-4);
+    if (stillSameDist) {
+      sm.forEach((m, idx) => {
+        m.dist = idx * (m.inst.sliceThickness && m.inst.sliceThickness > 0 ? m.inst.sliceThickness : 1.0);
+      });
+    }
 
     // ── STEP 4: Sort slices geometrically into canonical LPS orientation ────
     // RadiAnt Canonical LPS:
@@ -384,29 +406,31 @@ export class MprEngine {
       else sm.sort((a, b) => a.dist - b.dist);
     }
 
-    // ── STEP 5: Remove spatial duplicates (|Δdist| < 0.25 mm) ───────────────
+    // ── STEP 5: Remove spatial duplicates (|Δdist| < 0.005 mm) ───────────────
     const unique: SM[] = [];
     for (const m of sm) {
-      if (!unique.length || Math.abs(m.dist - unique[unique.length - 1].dist) > 0.25) {
+      if (!unique.length || Math.abs(m.dist - unique[unique.length - 1].dist) > 0.005) {
         unique.push(m);
       }
     }
-    if (unique.length < 2) return null;
+    const finalUnique = (unique.length >= 2 && unique.length >= sm.length * 0.4) ? unique : sm;
+    if (finalUnique.length < 2) return null;
 
     // ── STEP 6: Calculate physical slice spacing ────────────────────────────
-    const firstInst = unique[0].inst;
+    const firstInst = finalUnique.find(m => m.inst.rows && m.inst.columns)?.inst || finalUnique[0].inst;
     let sliceSpacing = firstInst.sliceThickness || 1.0;
     const diffs: number[] = [];
-    for (let i = 0; i < unique.length - 1; i++) {
-      const d = Math.abs(unique[i + 1].dist - unique[i].dist);
-      if (d > 0.05) diffs.push(d);
+    for (let i = 0; i < finalUnique.length - 1; i++) {
+      const d = Math.abs(finalUnique[i + 1].dist - finalUnique[i].dist);
+      if (d > 0.005) diffs.push(d);
     }
     if (diffs.length > 0) {
       diffs.sort((a, b) => a - b);
       sliceSpacing = diffs[Math.floor(diffs.length / 2)];
-    } else if (firstInst.spacingBetweenSlices && firstInst.spacingBetweenSlices > 0.05) {
+    } else if (firstInst.spacingBetweenSlices && firstInst.spacingBetweenSlices > 0.005) {
       sliceSpacing = firstInst.spacingBetweenSlices;
     }
+    if (!sliceSpacing || sliceSpacing <= 0.005) sliceSpacing = 1.0;
 
     // ── STEP 7: Populate canonical LPS volume ───────────────────────────────
     // Volume layout: data[z * dimY * dimX + y * dimX + x]
@@ -418,7 +442,7 @@ export class MprEngine {
 
     const inCols = firstInst.columns;
     const inRows = firstInst.rows;
-    const numSlices = unique.length;
+    const numSlices = finalUnique.length;
     const rowSpacing = firstInst.pixelSpacing?.[0] || 1.0;
     const colSpacing = firstInst.pixelSpacing?.[1] || 1.0;
 
@@ -452,7 +476,7 @@ export class MprEngine {
       const flipCol = rx < -0.5;
       const flipRow = cz > 0.5;
       for (let s = 0; s < numSlices; s++) {
-        const { huData } = getOrDecodeInstancePixels(unique[s].inst);
+        const { huData } = getOrDecodeInstancePixels(finalUnique[s].inst);
         for (let r = 0; r < inRows; r++) {
           const ar = flipRow ? inRows - 1 - r : r;
           const z = r;
@@ -472,7 +496,7 @@ export class MprEngine {
       const flipCol = ry < -0.5;
       const flipRow = cz > 0.5;
       for (let s = 0; s < numSlices; s++) {
-        const { huData } = getOrDecodeInstancePixels(unique[s].inst);
+        const { huData } = getOrDecodeInstancePixels(finalUnique[s].inst);
         for (let r = 0; r < inRows; r++) {
           const ar = flipRow ? inRows - 1 - r : r;
           const z = r;
@@ -493,7 +517,7 @@ export class MprEngine {
       const flipCol = rx < -0.5;
       const flipRow = cy < -0.5;
       for (let z = 0; z < dimZ; z++) {
-        const { huData } = getOrDecodeInstancePixels(unique[z].inst);
+        const { huData } = getOrDecodeInstancePixels(finalUnique[z].inst);
         const zBase = z * dimX * dimY;
         if (!flipCol && !flipRow) {
           for (let i = 0; i < dimX * dimY; i++) {
@@ -527,7 +551,7 @@ export class MprEngine {
       maxHu: globalMax === -Infinity ? 1000  : globalMax,
       windowCenter: firstInst.windowCenter || 40,
       windowWidth:  firstInst.windowWidth  || 400,
-      instances: unique.map(m => m.inst),
+      instances: finalUnique.map(m => m.inst),
       acquisitionPlane: dominantPlane
     };
   }

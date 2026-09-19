@@ -4,10 +4,12 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const { testDicomEcho, searchDicomStudies, retrieveDicomStudy } = require('./dicomNetwork.cjs');
 
-// High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC)
+// High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC, GPU crash immunity)
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 app.commandLine.appendSwitch('disable-http-cache');
 app.commandLine.appendSwitch('ignore-gpu-blacklist');
+app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
 
 // Process-level crash prevention
 process.on('uncaughtException', (err) => {
@@ -15,6 +17,9 @@ process.on('uncaughtException', (err) => {
 });
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[CRASH SHIELD] Unhandled Rejection in Main Process:', reason);
+});
+app.on('child-process-gone', (event, details) => {
+  console.warn('[CRASH SHIELD] Child/GPU process exited safely:', details);
 });
 
 let mainWindow = null;
@@ -36,7 +41,7 @@ function createWindow() {
     minHeight: 700,
     center: true,
     backgroundColor: '#0B0F17',
-    title: 'RadNode Viewer Version 0.0.7',
+    title: 'RadNode Viewer Version 0.0.8',
     icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
