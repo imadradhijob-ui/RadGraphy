@@ -4,12 +4,9 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const { testDicomEcho, searchDicomStudies, retrieveDicomStudy } = require('./dicomNetwork.cjs');
 
-// High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC, GPU crash immunity)
+// High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC)
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 app.commandLine.appendSwitch('disable-http-cache');
-app.commandLine.appendSwitch('ignore-gpu-blacklist');
-app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
-app.commandLine.appendSwitch('enable-gpu-rasterization');
 
 // --- PERSISTENT CRASH & ERROR LOG SYSTEM ---
 const logDir = path.join(app.getPath('userData'), 'logs');
@@ -140,6 +137,15 @@ function createWindow() {
     writeToLog('INFO_RESPONSIVE', 'WebContents returned to responsive state.');
   });
 
+  mainWindow.on('close', (e) => {
+    writeToLog('APP_LIFECYCLE', 'mainWindow "close" event fired (User clicked X or closed window)');
+  });
+
+  mainWindow.on('closed', () => {
+    writeToLog('APP_LIFECYCLE', 'mainWindow "closed" event fired');
+    mainWindow = null;
+  });
+
   const isDev = process.env.NODE_ENV === 'development' || (!app.isPackaged && !process.env.IS_PACKAGED);
 
   if (isDev && !app.isPackaged) {
@@ -150,14 +156,29 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  writeToLog('APP_LIFECYCLE', 'app "ready" event triggered');
   createWindow();
 
   app.on('activate', () => {
+    writeToLog('APP_LIFECYCLE', 'app "activate" event triggered');
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
+app.on('before-quit', (e) => {
+  writeToLog('APP_LIFECYCLE', 'app "before-quit" event triggered');
+});
+
+app.on('will-quit', (e) => {
+  writeToLog('APP_LIFECYCLE', 'app "will-quit" event triggered');
+});
+
+app.on('quit', (e, exitCode) => {
+  writeToLog('APP_LIFECYCLE', `app "quit" event triggered with exitCode: ${exitCode}`);
+});
+
 app.on('window-all-closed', () => {
+  writeToLog('APP_LIFECYCLE', 'app "window-all-closed" event triggered');
   if (process.platform !== 'darwin') app.quit();
 });
 
@@ -194,6 +215,7 @@ function scanDirectoryRecursively(dirPath, filesList = [], currentDepth = 0, sho
 
 // IPC Handlers: Files & Directories
 ipcMain.handle('dialog:openDicomFiles', async () => {
+  writeToLog('IPC', 'dialog:openDicomFiles called - opening file picker');
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Open DICOM Files or Folders',
     properties: ['openFile', 'multiSelections'],
@@ -203,8 +225,12 @@ ipcMain.handle('dialog:openDicomFiles', async () => {
     ]
   });
 
-  if (result.canceled || result.filePaths.length === 0) return [];
+  if (result.canceled || result.filePaths.length === 0) {
+    writeToLog('IPC', 'dialog:openDicomFiles canceled by user');
+    return [];
+  }
 
+  writeToLog('IPC', `dialog:openDicomFiles reading ${result.filePaths.length} paths`);
   const filesList = [];
   for (const filePath of result.filePaths) {
     try {
@@ -219,22 +245,32 @@ ipcMain.handle('dialog:openDicomFiles', async () => {
           buffer: data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
         });
       }
-    } catch (e) {}
+    } catch (e) {
+      writeToLog('ERROR', `Error reading file ${filePath}: ${e?.message}`);
+    }
   }
 
+  writeToLog('IPC', `dialog:openDicomFiles returning ${filesList.length} files to renderer`);
   return filesList;
 });
 
 ipcMain.handle('dialog:openDicomDirectory', async () => {
+  writeToLog('IPC', 'dialog:openDicomDirectory called - opening directory picker');
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Open Medical Study Folder or CD/DVD Drive',
     properties: ['openDirectory']
   });
 
-  if (result.canceled || result.filePaths.length === 0) return [];
+  if (result.canceled || result.filePaths.length === 0) {
+    writeToLog('IPC', 'dialog:openDicomDirectory canceled by user');
+    return [];
+  }
   const dirPath = result.filePaths[0];
+  writeToLog('IPC', `dialog:openDicomDirectory scanning directory: ${dirPath}`);
 
-  return scanDirectoryRecursively(dirPath);
+  const filesList = scanDirectoryRecursively(dirPath);
+  writeToLog('IPC', `dialog:openDicomDirectory scanned ${filesList.length} files from ${dirPath}`);
+  return filesList;
 });
 
 ipcMain.handle('system:openPath', async (event, targetPath) => {

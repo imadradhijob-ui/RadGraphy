@@ -18,6 +18,7 @@ import { BottomStatusBar } from './components/BottomStatusBar';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { LogViewerModal } from './components/LogViewerModal';
 import { DicomErrorBoundary } from './components/DicomErrorBoundary';
+import { logger } from './services/logger';
 import JSZip from 'jszip';
 
 import {
@@ -400,6 +401,7 @@ export const App: React.FC = () => {
   };
 
   const handleSelectStudy = (study: DicomStudy) => {
+    logger.info(`[STUDY] Selected: ${study.patientName || 'Anonymous'} (ID: ${study.patientId || 'NO_ID'}, ${study.series.length} series)`);
     setActiveStudyUid(study.studyInstanceUid);
     const targetSer = findMainVolumetricSeries(study) || study.series[0];
     const targetSerUid = targetSer ? targetSer.seriesInstanceUid : null;
@@ -451,6 +453,7 @@ export const App: React.FC = () => {
   };
 
   const handleSelectSeries = (series: DicomSeries) => {
+    logger.info(`[SERIES] Selected: ${series.seriesDescription || 'Series'} (${series.instances.length} slices, Modality: ${series.modality})`);
     setActiveSeriesUid(series.seriesInstanceUid);
     // If user selects an SR (Structured Report), scout, or non-volumetric series while in MPR,
     // smoothly switch to 2D view so the report / image is displayed properly
@@ -758,6 +761,7 @@ export const App: React.FC = () => {
   };
 
   const handleOpenFile = async () => {
+    logger.info('[ACTION] User clicked Open DICOM Files');
     if (window.electronAPI?.openDicomFiles) {
       try {
         const nativeFiles = await window.electronAPI.openDicomFiles();
@@ -773,6 +777,7 @@ export const App: React.FC = () => {
   };
 
   const handleOpenFolder = async () => {
+    logger.info('[ACTION] User clicked Open DICOM Folder');
     if (window.electronAPI?.openDicomDirectory) {
       try {
         const nativeFiles = await window.electronAPI.openDicomDirectory();
@@ -878,6 +883,7 @@ export const App: React.FC = () => {
 
   // Switch to or open MPR layout with matching anatomical plane series
   const handleOpenMprLayout = (layout: '2x2' | '3-view' | 'coronal-only' | 'axial-only' | 'sagittal-only') => {
+    logger.info(`[ACTION] User opened 3D MPR layout: ${layout}`);
     const currentStudy = activeStudy || studies[0] || null;
     if (currentStudy && currentStudy.series.length > 0) {
       if (layout === '2x2' || layout === '3-view') {
@@ -1196,7 +1202,10 @@ export const App: React.FC = () => {
           }
         }}
         onOpenMprLayout={handleOpenMprLayout}
-        onOpen3D={() => setIs3dModalOpen(true)}
+        onOpen3D={() => {
+          logger.info('[ACTION] User opened 3D Volume Modal');
+          setIs3dModalOpen(true);
+        }}
         isCinePlaying={currentViewport.cinePlaying}
         onToggleCine={() => updateActiveViewport({ cinePlaying: !currentViewport.cinePlaying })}
         currentWindowCenter={currentViewport.windowCenter}
