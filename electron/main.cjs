@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 const fs = require('fs');
@@ -11,15 +11,69 @@ app.commandLine.appendSwitch('ignore-gpu-blacklist');
 app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
 app.commandLine.appendSwitch('enable-gpu-rasterization');
 
+// --- PERSISTENT CRASH & ERROR LOG SYSTEM ---
+const logDir = path.join(app.getPath('userData'), 'logs');
+try {
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+} catch (e) {
+  console.error('[LOGGER] Failed to create log directory:', e);
+}
+
+const logFilePath = path.join(logDir, 'radnode_errors.log');
+
+// Log rotation: if > 5MB, backup previous log
+try {
+  if (fs.existsSync(logFilePath)) {
+    const stat = fs.statSync(logFilePath);
+    if (stat.size > 5 * 1024 * 1024) {
+      const oldLog = path.join(logDir, 'radnode_errors.old.log');
+      if (fs.existsSync(oldLog)) fs.unlinkSync(oldLog);
+      fs.renameSync(logFilePath, oldLog);
+    }
+  }
+} catch (_) {}
+
+function writeToLog(level, message, details = null) {
+  try {
+    const timestamp = new Date().toISOString();
+    let formattedDetails = '';
+    if (details) {
+      if (typeof details === 'string') {
+        formattedDetails = details;
+      } else if (details instanceof Error) {
+        formattedDetails = `${details.message}\n${details.stack || ''}`;
+      } else {
+        try {
+          formattedDetails = JSON.stringify(details, null, 2);
+        } catch (_) {
+          formattedDetails = String(details);
+        }
+      }
+    }
+    const logLine = `[${timestamp}] [${level.toUpperCase()}] ${message}\n${formattedDetails ? formattedDetails + '\n' : ''}------------------------------------------------------------\n`;
+    fs.appendFileSync(logFilePath, logLine, 'utf8');
+  } catch (err) {
+    console.error('[LOGGER] Failed writing to log file:', err);
+  }
+}
+
+// Log application session start
+writeToLog('SESSION_START', `RadNode Viewer v0.0.8 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
+
 // Process-level crash prevention
 process.on('uncaughtException', (err) => {
   console.error('[CRASH SHIELD] Uncaught Exception in Main Process:', err);
+  writeToLog('FATAL_MAIN_UNCAUGHT', err?.message || 'Uncaught Exception in Main Process', err?.stack || err);
 });
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[CRASH SHIELD] Unhandled Rejection in Main Process:', reason);
+  writeToLog('FATAL_MAIN_REJECTION', String(reason), reason?.stack);
 });
 app.on('child-process-gone', (event, details) => {
   console.warn('[CRASH SHIELD] Child/GPU process exited safely:', details);
+  writeToLog('WARN_CHILD_PROCESS_GONE', `Child/GPU process exited: ${details?.type || 'unknown'} (${details?.reason || 'unknown'})`, details);
 });
 
 let mainWindow = null;
@@ -58,13 +112,14 @@ function createWindow() {
   // WebContents crash protection & auto-recovery
   mainWindow.webContents.on('render-process-gone', (event, details) => {
     console.error('[CRASH SHIELD] Renderer process terminated:', details);
+    writeToLog('FATAL_RENDER_PROCESS_GONE', `Renderer process crashed or killed: reason=${details.reason}, exitCode=${details.exitCode}`, details);
     if (details.reason !== 'clean-exit') {
       try {
         dialog.showMessageBoxSync(mainWindow || undefined, {
           type: 'warning',
           title: 'RadNode Viewer - Safe Recovery',
           message: 'The display process encountered an unexpected issue and was restored.',
-          detail: `Reason: ${details.reason || 'Memory or system constraint'}\nYour viewer has been restored safely.`
+          detail: `Reason: ${details.reason || 'Memory or system constraint'}\n\nA diagnostic error report was saved to:\n${logFilePath}\n\nYour viewer has been restored safely.`
         });
       } catch (_) {}
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -75,6 +130,14 @@ function createWindow() {
 
   mainWindow.webContents.on('unresponsive', () => {
     console.warn('[CRASH SHIELD] Renderer process is processing heavy imaging data...');
+    writeToLog('WARN_UNRESPONSIVE', 'WebContents unresponsive detected (Heavy imaging loop or CPU/GPU load)', {
+      memory: process.memoryUsage()
+    });
+  });
+
+  mainWindow.webContents.on('responsive', () => {
+    console.log('[CRASH SHIELD] Renderer resumed responsive state.');
+    writeToLog('INFO_RESPONSIVE', 'WebContents returned to responsive state.');
   });
 
   const isDev = process.env.NODE_ENV === 'development' || (!app.isPackaged && !process.env.IS_PACKAGED);
@@ -384,5 +447,57 @@ ipcMain.handle('window:close', () => {
 ipcMain.handle('window:toggleFullScreen', () => {
   if (mainWindow) {
     mainWindow.setFullScreen(!mainWindow.isFullScreen());
+  }
+});
+
+// IPC Persistent Log Handlers
+ipcMain.handle('log:append', (event, entry) => {
+  if (!entry) return;
+  writeToLog(entry.level || 'RENDERER_ERROR', entry.message || 'Client Exception', {
+    stack: entry.stack,
+    context: entry.context
+  });
+});
+
+ipcMain.handle('log:openFile', async () => {
+  try {
+    if (!fs.existsSync(logFilePath)) {
+      writeToLog('INFO', 'Log file created on demand.');
+    }
+    await shell.openPath(logFilePath);
+    return { success: true, path: logFilePath };
+  } catch (err) {
+    return { success: false, error: err.message, path: logFilePath };
+  }
+});
+
+ipcMain.handle('log:getPath', () => {
+  return logFilePath;
+});
+
+ipcMain.handle('log:readContent', () => {
+  try {
+    if (!fs.existsSync(logFilePath)) return 'No error log found yet. Application is healthy.';
+    const stat = fs.statSync(logFilePath);
+    const maxBytes = 150 * 1024;
+    if (stat.size <= maxBytes) {
+      return fs.readFileSync(logFilePath, 'utf8');
+    }
+    const fd = fs.openSync(logFilePath, 'r');
+    const buffer = Buffer.alloc(maxBytes);
+    fs.readSync(fd, buffer, 0, maxBytes, stat.size - maxBytes);
+    fs.closeSync(fd);
+    return '... [Truncated to last 150KB of logs] ...\n\n' + buffer.toString('utf8');
+  } catch (err) {
+    return `Error reading log file: ${err.message}`;
+  }
+});
+
+ipcMain.handle('log:clear', () => {
+  try {
+    fs.writeFileSync(logFilePath, `[${new Date().toISOString()}] [INFO] Log cleared by user.\n------------------------------------------------------------\n`, 'utf8');
+    return true;
+  } catch (e) {
+    return false;
   }
 });

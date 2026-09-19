@@ -45,6 +45,7 @@ interface MenuBarProps {
   onOpenAbout: () => void;
   onOpenSettings?: () => void;
   onOpenShortcuts?: () => void;
+  onOpenLogs?: () => void;
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({
@@ -66,7 +67,8 @@ export const MenuBar: React.FC<MenuBarProps> = ({
   onOpenTags,
   onOpenAbout,
   onOpenSettings,
-  onOpenShortcuts
+  onOpenShortcuts,
+  onOpenLogs
 }) => {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -444,6 +446,16 @@ export const MenuBar: React.FC<MenuBarProps> = ({
               <Server className="w-3.5 h-3.5 text-purple-400" />
               <span>PACS Server & Storage Help...</span>
             </button>
+
+            {onOpenLogs && (
+              <button
+                onClick={() => executeAndClose(onOpenLogs)}
+                className="w-full text-left px-3 py-1.5 hover:bg-radiant-hover flex items-center gap-2 text-rose-300"
+              >
+                <FileText className="w-3.5 h-3.5 text-rose-400" />
+                <span>Error Logs & Crash Diagnostics...</span>
+              </button>
+            )}
 
             <div className="my-1 border-t border-radiant-border" />
 

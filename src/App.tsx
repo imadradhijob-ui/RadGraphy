@@ -16,6 +16,7 @@ import { ReportGeneratorModal } from './components/ReportGeneratorModal';
 import { SettingsModal } from './components/SettingsModal';
 import { BottomStatusBar } from './components/BottomStatusBar';
 import { ShortcutsModal } from './components/ShortcutsModal';
+import { LogViewerModal } from './components/LogViewerModal';
 import { DicomErrorBoundary } from './components/DicomErrorBoundary';
 import JSZip from 'jszip';
 
@@ -70,6 +71,7 @@ export const App: React.FC = () => {
   const [is3dModalOpen, setIs3dModalOpen] = useState<boolean>(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
+  const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
   const [showOverlays, setShowOverlays] = useState<boolean>(true);
 
   // Streaming Background Loading State
@@ -1163,6 +1165,7 @@ export const App: React.FC = () => {
         onOpenAbout={() => setIsAboutModalOpen(true)}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         onOpenShortcuts={() => setIsShortcutsModalOpen(true)}
+        onOpenLogs={() => setIsLogModalOpen(true)}
       />
 
       {/* 3. Main Tool Bar */}
@@ -1427,6 +1430,11 @@ export const App: React.FC = () => {
       <ShortcutsModal
         isOpen={isShortcutsModalOpen}
         onClose={() => setIsShortcutsModalOpen(false)}
+      />
+
+      <LogViewerModal
+        isOpen={isLogModalOpen}
+        onClose={() => setIsLogModalOpen(false)}
       />
     </div>
   );

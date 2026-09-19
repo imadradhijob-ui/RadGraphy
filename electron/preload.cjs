@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),
   toggleFullScreen: () => ipcRenderer.invoke('window:toggleFullScreen'),
+  logError: (entry) => ipcRenderer.invoke('log:append', entry),
+  openLogFile: () => ipcRenderer.invoke('log:openFile'),
+  getLogPath: () => ipcRenderer.invoke('log:getPath'),
+  readLogContent: () => ipcRenderer.invoke('log:readContent'),
+  clearLog: () => ipcRenderer.invoke('log:clear'),
   onPacsSlice: (callback) => {
     const listener = (event, slice) => callback(slice);
     ipcRenderer.on('pacs:slice', listener);

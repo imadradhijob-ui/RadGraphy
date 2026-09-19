@@ -1,5 +1,6 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { AlertTriangle, RefreshCw, FileText } from 'lucide-react';
+import { logger } from '../services/logger';
 
 interface Props {
   children: ReactNode;
@@ -24,6 +25,14 @@ export class DicomErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[CRASH SHIELD] DicomErrorBoundary caught error:', error, errorInfo);
+    logger.error(
+      `[ErrorBoundary] ${error.message}`,
+      error,
+      {
+        fallbackMessage: this.props.fallbackMessage,
+        componentStack: errorInfo.componentStack
+      }
+    );
   }
 
   private handleRetry = () => {
@@ -57,13 +66,25 @@ export class DicomErrorBoundary extends Component<Props, State> {
               </div>
             )}
 
-            <button
-              onClick={this.handleRetry}
-              className="mt-2 flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-cyan-500/20 transition-all active:scale-95 cursor-pointer"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Restore Viewport</span>
-            </button>
+            <div className="flex items-center gap-2 mt-2">
+              <button
+                onClick={this.handleRetry}
+                className="flex items-center gap-2 px-4 py-1.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg text-xs font-semibold shadow-lg shadow-cyan-500/20 transition-all active:scale-95 cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Restore Viewport</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => logger.openLogFile()}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
+                title="Open persistent error log file in Notepad"
+              >
+                <FileText className="w-3.5 h-3.5 text-cyan-400" />
+                <span>Open Log</span>
+              </button>
+            </div>
           </div>
         </div>
       );

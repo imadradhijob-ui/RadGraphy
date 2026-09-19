@@ -63,5 +63,10 @@ interface Window {
     pacsSearch: (serverConfig: any, filters: any) => Promise<any[]>;
     pacsRetrieve: (serverConfig: any, studyInstanceUid: string) => Promise<{ success: boolean; count: number; files: Array<{ fileName: string; buffer: string; size: number }> }>;
     onPacsSlice?: (callback: (slice: { fileName: string; buffer: string; size: number; index: number }) => void) => () => void;
+    logError?: (entry: { level?: string; message: string; stack?: string; context?: any }) => Promise<void>;
+    openLogFile?: () => Promise<{ success: boolean; error?: string; path?: string }>;
+    getLogPath?: () => Promise<string>;
+    readLogContent?: () => Promise<string>;
+    clearLog?: () => Promise<boolean>;
   };
 }
