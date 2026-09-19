@@ -4,9 +4,24 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const { testDicomEcho, searchDicomStudies, retrieveDicomStudy } = require('./dicomNetwork.cjs');
 
-// High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC)
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
-app.commandLine.appendSwitch('disable-http-cache');
+// Prevent GPU process crashes from terminating the whole viewer window
+app.commandLine.appendSwitch('disable-gpu-process-crash-limit');
+
+// Ensure only a single instance of RadNode Viewer runs at any time
+// Prevents multiple processes from colliding on LevelDB/userData file locks which causes silent exits
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  writeToLog('APP_LIFECYCLE', 'Secondary instance prevented from launching (Single Instance Lock enforced)');
+  app.quit();
+} else {
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    writeToLog('APP_LIFECYCLE', 'Second instance launch detected - focusing primary window');
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
 
 // --- PERSISTENT CRASH & ERROR LOG SYSTEM ---
 const logDir = path.join(app.getPath('userData'), 'logs');
@@ -57,7 +72,7 @@ function writeToLog(level, message, details = null) {
 }
 
 // Log application session start
-writeToLog('SESSION_START', `RadNode Viewer v0.0.9 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
+writeToLog('SESSION_START', `RadNode Viewer v0.0.10 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
 
 // Process-level crash prevention
 process.on('uncaughtException', (err) => {
@@ -92,7 +107,7 @@ function createWindow() {
     minHeight: 700,
     center: true,
     backgroundColor: '#0B0F17',
-    title: 'RadNode Viewer Version 0.0.9',
+    title: 'RadNode Viewer Version 0.0.10',
     icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

@@ -1381,9 +1381,10 @@ function extractEncapsulatedPixelData(
       byteArray.byteOffset + targetItem.offset + targetItem.length
     );
     if (bitsAllocated === 16) {
-      return pixelRep === 1 ? new Int16Array(frameBytes) : new Uint16Array(frameBytes);
+      const numElements = Math.min(numPixels, Math.floor(frameBytes.byteLength / 2));
+      return pixelRep === 1 ? new Int16Array(frameBytes, 0, numElements) : new Uint16Array(frameBytes, 0, numElements);
     } else {
-      return new Uint8Array(frameBytes);
+      return new Uint8Array(frameBytes, 0, Math.min(numPixels, frameBytes.byteLength));
     }
   }
 

@@ -65,7 +65,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({
               <div className="flex items-center gap-2">
                 <h2 className="font-bold text-sm text-white tracking-wide">RadNode Viewer</h2>
                 <span className="px-1.5 py-0.2 bg-cyan-950/80 text-cyan-300 font-mono text-[10px] rounded border border-cyan-400/40">
-                  v0.0.9 Release
+                  v0.0.10 Release
                 </span>
               </div>
               <p className="text-[10.5px] text-slate-400">Medical Diagnostic PACS Workstation</p>
@@ -278,7 +278,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({
 
         {/* Footer */}
         <div className="h-12 bg-radiant-darkest border-t border-radiant-border px-5 flex items-center justify-between text-[11px] text-slate-400 shrink-0">
-          <span className="font-mono text-cyan-400">RadNode Viewer • Version 0.0.9</span>
+          <span className="font-mono text-cyan-400">RadNode Viewer • Version 0.0.10</span>
           <button
             onClick={onClose}
             className="px-4 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-semibold transition-colors text-xs"

@@ -108,7 +108,7 @@ export const ShortcutsModal: React.FC<ShortcutsModalProps> = ({ isOpen, onClose 
 
           <div className="bg-cyan-950/40 border border-cyan-500/30 rounded-lg p-3 text-[11px] text-cyan-200 flex items-center justify-between">
             <span>Tip: You can press <kbd className="px-1.5 py-0.5 rounded bg-cyan-900 border border-cyan-400/40 font-mono text-cyan-100 font-bold">?</kbd> anytime to toggle this cheat sheet.</span>
-            <span className="font-semibold text-cyan-400">RadNode Viewer v0.0.9</span>
+            <span className="font-semibold text-cyan-400">RadNode Viewer v0.0.10</span>
           </div>
         </div>
 

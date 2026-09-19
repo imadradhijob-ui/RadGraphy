@@ -7,7 +7,20 @@ const DB_NAME = 'radiant_dicom_cache_v3';
 const STORE_STUDIES = 'studies';
 const STORE_SLICES = 'slices';
 
+let cachedDb: IDBDatabase | null = null;
+const MAX_CACHED_STUDIES = 3;
+
 function openDatabase(): Promise<IDBDatabase> {
+  if (cachedDb) {
+    try {
+      // Verify database connection is still open
+      cachedDb.transaction(STORE_STUDIES, 'readonly');
+      return Promise.resolve(cachedDb);
+    } catch (_) {
+      cachedDb = null;
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, 1);
 
@@ -22,8 +35,21 @@ function openDatabase(): Promise<IDBDatabase> {
       }
     };
 
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      cachedDb = request.result;
+      cachedDb.onclose = () => { cachedDb = null; };
+      cachedDb.onversionchange = () => {
+        if (cachedDb) {
+          cachedDb.close();
+          cachedDb = null;
+        }
+      };
+      resolve(cachedDb);
+    };
+    request.onerror = () => {
+      cachedDb = null;
+      reject(request.error);
+    };
   });
 }
 
@@ -132,6 +158,19 @@ export class LocalDicomCache {
       const tx = db.transaction(STORE_STUDIES, 'readwrite');
       const store = tx.objectStore(STORE_STUDIES);
       store.put({ ...metadata, lastAccessed: Date.now() });
+
+      // Automatically prune oldest studies if total count exceeds MAX_CACHED_STUDIES
+      const allReq = store.getAll();
+      allReq.onsuccess = () => {
+        const allStudies = allReq.result as CachedStudyMetadata[];
+        if (allStudies && allStudies.length > MAX_CACHED_STUDIES) {
+          allStudies.sort((a, b) => (a.lastAccessed || 0) - (b.lastAccessed || 0));
+          const toRemove = allStudies.slice(0, allStudies.length - MAX_CACHED_STUDIES);
+          for (const s of toRemove) {
+            LocalDicomCache.deleteStudy(s.studyInstanceUid);
+          }
+        }
+      };
     } catch (err) {
       console.warn('Cache finalize study error:', err);
     }

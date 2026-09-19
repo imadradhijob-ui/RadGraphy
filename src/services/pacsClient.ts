@@ -515,7 +515,7 @@ export class PacsService {
                 if (initialGrouped.length > 0) {
                   onFirstBatch(initialGrouped[0]);
                 }
-              } else if (firstBatchTriggered && onBatchUpdate && (allInstances.length % 5 === 0 || allInstances.length <= 20)) {
+              } else if (firstBatchTriggered && onBatchUpdate && allInstances.length % 25 === 0) {
                 const updated = groupInstancesIntoStudies(
                   [...allInstances],
                   'pacs',
