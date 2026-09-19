@@ -1037,7 +1037,7 @@ function decodeCompressedDicomSlice(
 }
 
 // Memory Shield: LRU Decoded Slices Cache to prevent Out-Of-Memory on large 500-2000+ slice studies
-const MAX_DECODED_SLICES_IN_MEMORY = 80;
+const MAX_DECODED_SLICES_IN_MEMORY = 150;
 const decodedInstancesLruQueue: DicomInstance[] = [];
 
 function registerDecodedInstanceInLru(instance: DicomInstance) {

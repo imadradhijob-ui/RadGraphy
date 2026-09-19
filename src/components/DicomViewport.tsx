@@ -13,6 +13,7 @@ import { getOrDecodeInstancePixels } from '../services/dicomParser';
 import { getLutTable, classifyTissueFromHu } from '../services/lutService';
 import { applyImageFilter } from '../services/imageFilters';
 import { calculateCrossReferenceLine } from '../services/crossReferenceService';
+import { logger } from '../services/logger';
 
 interface DicomViewportProps {
   viewportState: ViewportState;
@@ -82,18 +83,50 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
   const stepIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const stepTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Smooth RAF scrolling throttles & buffer reuse
+  const reusableImageDataRef = useRef<{ imgData: ImageData; width: number; height: number } | null>(null);
+  const currentTargetIndexRef = useRef(instanceIndex);
+  const latestInstanceIndexRef = useRef(instanceIndex);
+  latestInstanceIndexRef.current = instanceIndex;
+  const onUpdateStateRef = useRef(onUpdateState);
+  onUpdateStateRef.current = onUpdateState;
+
+  useEffect(() => {
+    currentTargetIndexRef.current = instanceIndex;
+  }, [instanceIndex]);
+
+  const wheelRafIdRef = useRef<number | null>(null);
+  const trackRafIdRef = useRef<number | null>(null);
+  const trackPendingTargetRef = useRef<number | null>(null);
+
   const handleScrollToY = useCallback((clientY: number) => {
     if (!scrollbarTrackRef.current || totalInstances <= 1) return;
     const rect = scrollbarTrackRef.current.getBoundingClientRect();
+    if (rect.height <= 0) return;
     const relativeY = Math.max(0, Math.min(rect.height, clientY - rect.top));
     const ratio = rect.height > 0 ? relativeY / rect.height : 0;
     const targetIdx = Math.max(0, Math.min(totalInstances - 1, Math.round(ratio * (totalInstances - 1))));
-    if (targetIdx !== viewportState.instanceIndex) {
-      onUpdateState({ instanceIndex: targetIdx });
-    }
+
+    // Tooltip is instant for responsive UI feedback
     setScrollTooltipY(relativeY);
     setScrollTooltipIdx(targetIdx);
-  }, [totalInstances, viewportState.instanceIndex, onUpdateState]);
+
+    currentTargetIndexRef.current = targetIdx;
+    trackPendingTargetRef.current = targetIdx;
+
+    if (trackRafIdRef.current === null) {
+      trackRafIdRef.current = requestAnimationFrame(() => {
+        trackRafIdRef.current = null;
+        if (trackPendingTargetRef.current !== null) {
+          const target = trackPendingTargetRef.current;
+          trackPendingTargetRef.current = null;
+          if (target !== latestInstanceIndexRef.current) {
+            onUpdateStateRef.current({ instanceIndex: target });
+          }
+        }
+      });
+    }
+  }, [totalInstances]);
 
   const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
@@ -128,6 +161,19 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch (_) {}
+
+      // Flush any pending track update on release
+      if (trackRafIdRef.current !== null) {
+        cancelAnimationFrame(trackRafIdRef.current);
+        trackRafIdRef.current = null;
+      }
+      if (trackPendingTargetRef.current !== null) {
+        const target = trackPendingTargetRef.current;
+        trackPendingTargetRef.current = null;
+        if (target !== latestInstanceIndexRef.current) {
+          onUpdateState({ instanceIndex: target });
+        }
+      }
     }
   };
 
@@ -161,6 +207,14 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
   useEffect(() => {
     return () => {
       stopStepScroll();
+      if (wheelRafIdRef.current !== null) {
+        cancelAnimationFrame(wheelRafIdRef.current);
+        wheelRafIdRef.current = null;
+      }
+      if (trackRafIdRef.current !== null) {
+        cancelAnimationFrame(trackRafIdRef.current);
+        trackRafIdRef.current = null;
+      }
     };
   }, [stopStepScroll]);
 
@@ -219,16 +273,29 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
 
   // Render DICOM image on HTML5 Canvas
   const renderDicom = useCallback(() => {
-    if (!canvasRef.current || !currentInstance) return;
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    try {
+      if (!canvasRef.current || !currentInstance) return;
+      const canvas = canvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-    const width = currentInstance.columns;
-    const height = currentInstance.rows;
+      const width = currentInstance.columns;
+      const height = currentInstance.rows;
+      if (!width || !height || width <= 0 || height <= 0) return;
 
-    const imgData = ctx.createImageData(width, height);
-    const data = imgData.data;
+      // Reuse allocated ImageData buffer to avoid GC pressure during rapid scrolling
+      let imgData: ImageData;
+      if (
+        reusableImageDataRef.current &&
+        reusableImageDataRef.current.width === width &&
+        reusableImageDataRef.current.height === height
+      ) {
+        imgData = reusableImageDataRef.current.imgData;
+      } else {
+        imgData = ctx.createImageData(width, height);
+        reusableImageDataRef.current = { imgData, width, height };
+      }
+      const data = imgData.data;
 
     const { pixelData, huData } = getOrDecodeInstancePixels(currentInstance);
     const numPixels = width * height;
@@ -367,14 +434,23 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     }
 
     ctx.restore();
+    } catch (err) {
+      console.error('[CRASH SHIELD] Error rendering DICOM slice:', err);
+      logger.error('Error rendering DICOM slice', err instanceof Error ? err : undefined, {
+        fileName: currentInstance?.fileName,
+        instanceIndex,
+        totalInstances: series?.instances?.length
+      });
+    }
   }, [currentInstance, viewportState, series, instanceIndex]);
 
   // Render Measurements & HUD Overlay Canvas
   const renderOverlay = useCallback(() => {
-    if (!overlayCanvasRef.current || !containerRef.current) return;
-    const canvas = overlayCanvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    try {
+      if (!overlayCanvasRef.current || !containerRef.current) return;
+      const canvas = overlayCanvasRef.current;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
     const dpr = window.devicePixelRatio || 1;
     const displayWidth = containerRef.current.clientWidth;
@@ -758,12 +834,22 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     }
 
     ctx.restore();
+    } catch (err) {
+      console.error('[CRASH SHIELD] Error rendering overlay:', err);
+      logger.error('Error rendering overlay', err instanceof Error ? err : undefined, {
+        instanceIndex
+      });
+    }
   }, [currentInstance, viewportState, drawingPoints, mousePos, instanceIndex, activeTool, imageToScreenCoord, hoveredHu, hoveredPixelCoord, referenceSlice, referenceSlices]);
 
+  // Separate render effects to prevent mouse move / hover events from triggering heavy pixel redraw
   useEffect(() => {
     renderDicom();
+  }, [renderDicom]);
+
+  useEffect(() => {
     renderOverlay();
-  }, [renderDicom, renderOverlay]);
+  }, [renderOverlay]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -969,17 +1055,28 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
     setDragButton(null);
   };
 
-  const handleWheel = (e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
-    if (!series || series.instances.length <= 1) return;
+    if (!series || !series.instances || series.instances.length <= 1) return;
 
-    const delta = e.deltaY > 0 ? 1 : -1;
-    const nextIdx = Math.max(0, Math.min(series.instances.length - 1, viewportState.instanceIndex + delta));
+    const total = series.instances.length;
+    const delta = e.deltaY > 0 ? 1 : (e.deltaY < 0 ? -1 : 0);
+    if (delta === 0) return;
 
-    if (nextIdx !== viewportState.instanceIndex) {
-      onUpdateState({ instanceIndex: nextIdx });
+    const nextTarget = Math.max(0, Math.min(total - 1, currentTargetIndexRef.current + delta));
+    if (nextTarget === currentTargetIndexRef.current) return;
+    currentTargetIndexRef.current = nextTarget;
+
+    if (wheelRafIdRef.current === null) {
+      wheelRafIdRef.current = requestAnimationFrame(() => {
+        wheelRafIdRef.current = null;
+        const target = currentTargetIndexRef.current;
+        if (target !== latestInstanceIndexRef.current) {
+          onUpdateStateRef.current({ instanceIndex: target });
+        }
+      });
     }
-  };
+  }, [series]);
 
   const getCursorClass = () => {
     switch (activeTool) {

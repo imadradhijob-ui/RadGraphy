@@ -1,9 +1,9 @@
 {
   "name": "radnode-viewer",
   "private": true,
-  "version": "0.0.8",
-  "description": "RadNode Viewer Version 0.0.8 - POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL",
-  "author": "IT Department - Al-Shaab Hospital",
+  "version": "0.0.9",
+  "description": "RadNode Viewer Version 0.0.9 - POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL",
+  "author": "IMAD RADHI <imad.radhi@gmail.com>",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -39,7 +39,7 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "shortcutName": "RadNode Viewer",
-      "artifactName": "RadNode Viewer Setup 0.0.8.${ext}",
+      "artifactName": "RadNode Viewer Setup 0.0.9.${ext}",
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "uninstallDisplayName": "RadNode Viewer"

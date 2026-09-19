@@ -57,7 +57,7 @@ function writeToLog(level, message, details = null) {
 }
 
 // Log application session start
-writeToLog('SESSION_START', `RadNode Viewer v0.0.8 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
+writeToLog('SESSION_START', `RadNode Viewer v0.0.9 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
 
 // Process-level crash prevention
 process.on('uncaughtException', (err) => {
@@ -92,7 +92,7 @@ function createWindow() {
     minHeight: 700,
     center: true,
     backgroundColor: '#0B0F17',
-    title: 'RadNode Viewer Version 0.0.8',
+    title: 'RadNode Viewer Version 0.0.9',
     icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
