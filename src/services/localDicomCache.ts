@@ -10,15 +10,35 @@ const STORE_SLICES = 'slices';
 let cachedDb: IDBDatabase | null = null;
 const MAX_CACHED_STUDIES = 3;
 
+// High-performance batched slice persistence queue to eliminate IndexedDB transaction exhaustion
+let pendingSlicesQueue: CachedSliceEntry[] = [];
+let sliceFlushTimer: any = null;
+let isFlushingSlices = false;
+
+async function flushPendingSlices(): Promise<void> {
+  if (isFlushingSlices || pendingSlicesQueue.length === 0) return;
+  isFlushingSlices = true;
+  const chunk = pendingSlicesQueue.splice(0, 30);
+  try {
+    const db = await openDatabase();
+    const tx = db.transaction(STORE_SLICES, 'readwrite');
+    const store = tx.objectStore(STORE_SLICES);
+    for (const entry of chunk) {
+      store.put(entry);
+    }
+  } catch (err) {
+    console.warn('Batch cache save error:', err);
+  } finally {
+    isFlushingSlices = false;
+    if (pendingSlicesQueue.length > 0) {
+      setTimeout(flushPendingSlices, 10);
+    }
+  }
+}
+
 function openDatabase(): Promise<IDBDatabase> {
   if (cachedDb) {
-    try {
-      // Verify database connection is still open
-      cachedDb.transaction(STORE_STUDIES, 'readonly');
-      return Promise.resolve(cachedDb);
-    } catch (_) {
-      cachedDb = null;
-    }
+    return Promise.resolve(cachedDb);
   }
 
   return new Promise((resolve, reject) => {
@@ -129,21 +149,26 @@ export class LocalDicomCache {
   }
 
   /**
-   * Saves incoming slices to local fast cache in background
+   * Saves incoming slices to local fast cache in background with batching
    */
   static async saveSlice(studyInstanceUid: string, fileName: string, buffer: ArrayBuffer): Promise<void> {
     try {
-      const db = await openDatabase();
-      const tx = db.transaction(STORE_SLICES, 'readwrite');
-      const store = tx.objectStore(STORE_SLICES);
-      const entry: CachedSliceEntry = {
+      pendingSlicesQueue.push({
         id: `${studyInstanceUid}_${fileName}`,
         studyInstanceUid,
         fileName,
         buffer,
         timestamp: Date.now()
-      };
-      store.put(entry);
+      });
+      if (pendingSlicesQueue.length >= 30) {
+        if (sliceFlushTimer) { clearTimeout(sliceFlushTimer); sliceFlushTimer = null; }
+        flushPendingSlices();
+      } else if (!sliceFlushTimer) {
+        sliceFlushTimer = setTimeout(() => {
+          sliceFlushTimer = null;
+          flushPendingSlices();
+        }, 150);
+      }
     } catch (err) {
       console.warn('Cache save slice error:', err);
     }
@@ -154,6 +179,10 @@ export class LocalDicomCache {
    */
   static async finalizeStudy(metadata: CachedStudyMetadata): Promise<void> {
     try {
+      // Ensure all queued slices are flushed before finalizing metadata
+      if (pendingSlicesQueue.length > 0) {
+        await flushPendingSlices();
+      }
       const db = await openDatabase();
       const tx = db.transaction(STORE_STUDIES, 'readwrite');
       const store = tx.objectStore(STORE_STUDIES);
@@ -198,6 +227,7 @@ export class LocalDicomCache {
    * Deletes a specific study and all its slices from local cache
    */
   static async deleteStudy(studyInstanceUid: string): Promise<void> {
+    pendingSlicesQueue = pendingSlicesQueue.filter(s => s.studyInstanceUid !== studyInstanceUid);
     try {
       const db = await openDatabase();
       const tx = db.transaction([STORE_STUDIES, STORE_SLICES], 'readwrite');
@@ -207,10 +237,14 @@ export class LocalDicomCache {
       const index = sliceStore.index('studyUid');
       const req = index.getAllKeys(studyInstanceUid);
       req.onsuccess = () => {
-        const keys = req.result;
-        if (keys && keys.length > 0) {
-          keys.forEach(k => sliceStore.delete(k));
-        }
+        try {
+          const keys = req.result;
+          if (keys && keys.length > 0) {
+            keys.forEach(k => {
+              try { sliceStore.delete(k); } catch (_) {}
+            });
+          }
+        } catch (_) {}
       };
     } catch (e) {}
   }

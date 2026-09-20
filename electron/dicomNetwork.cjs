@@ -1360,7 +1360,13 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
         const pduLen = clientBuffer.readUInt32BE(2);
         if (clientBuffer.length < 6 + pduLen) break;
         const pduPayload = clientBuffer.slice(6, 6 + pduLen);
-        clientBuffer = clientBuffer.slice(6 + pduLen);
+        const remBuf = clientBuffer.slice(6 + pduLen);
+        if (remBuf.length === 0) {
+          clientBuffer = Buffer.alloc(0);
+        } else {
+          // Detach from previous memory so old chunks are garbage collected immediately
+          clientBuffer = Buffer.from(remBuf);
+        }
 
         if (pduType === PDU_A_ASSOCIATE_AC) {
           console.log(`[C-GET Association Established] Level: ${seriesUid ? 'SERIES' : 'STUDY'}`);
@@ -1408,9 +1414,18 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
                   size: p10Buf.length,
                   index: received.length + 1
                 };
-                received.push(fileObj);
+
                 if (typeof onSliceFile === 'function') {
                   try { onSliceFile(fileObj); } catch (e) {}
+                  // In streaming mode: Store only lightweight metadata in received to avoid accumulating
+                  // gigabytes of base64 strings in the Node process heap, allowing immediate garbage collection!
+                  received.push({
+                    fileName: fileObj.fileName,
+                    size: fileObj.size,
+                    index: fileObj.index
+                  });
+                } else {
+                  received.push(fileObj);
                 }
 
                 // Send C-STORE-RSP confirmation
@@ -1425,8 +1440,16 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
       }
     });
 
-    socket.on('error', cleanup);
-    socket.on('close', cleanup);
+    socket.on('error', (err) => {
+      clearTimeout(timer);
+      console.warn('C-GET Socket error:', err.message);
+      cleanup();
+    });
+
+    socket.on('close', () => {
+      clearTimeout(timer);
+      cleanup();
+    });
   });
 }
 
@@ -1434,6 +1457,8 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
  * Retrieves full real DICOM studies via RadiAnt Architecture (Study-Root C-GET with fallback)
  */
 async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
+  const isStreaming = typeof onSlice === 'function';
+
   // 1. Discover all series under this study (for metadata and logging)
   let seriesList = [];
   try {
@@ -1452,9 +1477,12 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
   const handleWorkerSlice = (fileObj) => {
     sliceIndex++;
     fileObj.index = sliceIndex;
-    allFiles.push(fileObj);
-    if (typeof onSlice === 'function') {
+    if (isStreaming) {
       try { onSlice(fileObj); } catch (e) {}
+      // Do NOT keep massive base64 buffers in allFiles when streaming; only retain metadata
+      allFiles.push({ fileName: fileObj.fileName, size: fileObj.size, index: fileObj.index });
+    } else {
+      allFiles.push(fileObj);
     }
   };
 
@@ -1467,7 +1495,7 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     return {
       success: true,
       count: studyResult.length,
-      files: studyResult
+      files: isStreaming ? [] : studyResult
     };
   }
 
@@ -1484,7 +1512,7 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     return {
       success: allFiles.length > 0,
       count: allFiles.length,
-      files: allFiles
+      files: isStreaming ? [] : allFiles
     };
   }
 

@@ -490,6 +490,7 @@ export class PacsService {
         onProgress(20, `Requesting PACS download for ${result.patientName}...`);
         const allInstances: DicomInstance[] = [];
         let firstBatchTriggered = false;
+        let lastBatchUpdateTimestamp = 0;
 
         const unsubscribe = window.electronAPI.onPacsSlice ? window.electronAPI.onPacsSlice((f: any) => {
           try {
@@ -515,14 +516,18 @@ export class PacsService {
                 if (initialGrouped.length > 0) {
                   onFirstBatch(initialGrouped[0]);
                 }
-              } else if (firstBatchTriggered && onBatchUpdate && allInstances.length % 25 === 0) {
-                const updated = groupInstancesIntoStudies(
-                  [...allInstances],
-                  'pacs',
-                  `${server.name} (${result.studyDescription || result.patientName})`
-                );
-                if (updated.length > 0) {
-                  onBatchUpdate(updated[0]);
+              } else if (firstBatchTriggered && onBatchUpdate) {
+                const now = Date.now();
+                if (now - lastBatchUpdateTimestamp >= 600 || allInstances.length % 50 === 0) {
+                  lastBatchUpdateTimestamp = now;
+                  const updated = groupInstancesIntoStudies(
+                    [...allInstances],
+                    'pacs',
+                    `${server.name} (${result.studyDescription || result.patientName})`
+                  );
+                  if (updated.length > 0) {
+                    onBatchUpdate(updated[0]);
+                  }
                 }
               }
             }
@@ -591,6 +596,7 @@ export class PacsService {
           let buffer = '';
           const allInstances: DicomInstance[] = [];
           let firstBatchTriggered = false;
+          let lastSseBatchTimestamp = 0;
 
           while (true) {
             const { done, value } = await reader.read();
@@ -629,14 +635,18 @@ export class PacsService {
                         if (initialGrouped.length > 0) {
                           onFirstBatch(initialGrouped[0]);
                         }
-                      } else if (firstBatchTriggered && onBatchUpdate && (allInstances.length % 25 === 0)) {
-                        const updated = groupInstancesIntoStudies(
-                          [...allInstances],
-                          'pacs',
-                          `${server.name} (${result.studyDescription || result.patientName})`
-                        );
-                        if (updated.length > 0) {
-                          onBatchUpdate(updated[0]);
+                      } else if (firstBatchTriggered && onBatchUpdate) {
+                        const now = Date.now();
+                        if (now - lastSseBatchTimestamp >= 600 || allInstances.length % 50 === 0) {
+                          lastSseBatchTimestamp = now;
+                          const updated = groupInstancesIntoStudies(
+                            [...allInstances],
+                            'pacs',
+                            `${server.name} (${result.studyDescription || result.patientName})`
+                          );
+                          if (updated.length > 0) {
+                            onBatchUpdate(updated[0]);
+                          }
                         }
                       }
                       if (allInstances.length % 5 === 0 || allInstances.length <= 10) {
