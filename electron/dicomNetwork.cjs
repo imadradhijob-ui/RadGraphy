@@ -413,7 +413,15 @@ function makeDicomPart10Buffer(rawDatasetBuf, sopClassUid = '', sopInstUid = '',
   metaElems.push(sopInstElem);
 
   // (0002,0010) TransferSyntaxUID UI
-  const ts = transferSyntax || TS_EXPLICIT_VR_LE;
+  let ts = transferSyntax || TS_EXPLICIT_VR_LE;
+  if (rawDatasetBuf.length >= 8) {
+    const b4 = rawDatasetBuf[4];
+    const b5 = rawDatasetBuf[5];
+    const isExplicit = (b4 >= 65 && b4 <= 90 && b5 >= 65 && b5 <= 90);
+    if (!isExplicit) {
+      ts = TS_IMPLICIT_VR_LE;
+    }
+  }
   let tsBuf = Buffer.from(ts, 'ascii');
   if (tsBuf.length % 2 !== 0) tsBuf = Buffer.concat([tsBuf, Buffer.from([0x00])]);
   const tsElem = Buffer.alloc(8 + tsBuf.length);
@@ -560,7 +568,16 @@ function buildDicomStringElement(group, elem, val) {
   elBuf.writeUInt16LE(elem, 2);
   elBuf.writeUInt32LE(valBuf.length, 4);
   valBuf.copy(elBuf, 8);
-  return elBuf;
+  return { group, elem, buf: elBuf };
+}
+
+function assembleDicomDataset(elements) {
+  // DICOM standard PS 3.5 Section 7.1.1: Data Elements shall be ordered by increasing Tag number
+  elements.sort((a, b) => {
+    if (a.group !== b.group) return a.group - b.group;
+    return a.elem - b.elem;
+  });
+  return Buffer.concat(elements.map(e => e.buf));
 }
 
 function buildCFindRq(pcId, sopClassUid, filters = {}, messageId = 1) {
@@ -637,32 +654,31 @@ function buildCFindRq(pcId, sopClassUid, filters = {}, messageId = 1) {
     if (dFrom && dTo) {
       dateFilter = `${dFrom}-${dTo}`;
     } else if (dFrom) {
-      dateFilter = `${dFrom}-${dFrom}`;
+      dateFilter = `${dFrom}-`;
     } else if (dTo) {
-      dateFilter = `${dTo}-${dTo}`;
+      dateFilter = `-${dTo}`;
     }
-  } else if (dateFilter && !dateFilter.includes('-')) {
-    dateFilter = `${dateFilter}-${dateFilter}`;
   }
 
+  // Study Root Information Model - strictly sorted ascending by tag:
+  // Note: Modality (0008,0060) is NOT allowed at STUDY level; ModalitiesInStudy (0008,0061) is the standard tag.
   const dataElems = [
-    buildDicomStringElement(0x0008, 0x0052, 'STUDY'),
-    buildDicomStringElement(0x0008, 0x0020, dateFilter),
-    buildDicomStringElement(0x0008, 0x0030, ''),
-    buildDicomStringElement(0x0008, 0x0050, accFilter),
-    buildDicomStringElement(0x0008, 0x0060, modalityFilter),
-    buildDicomStringElement(0x0008, 0x0061, modalityFilter),
-    buildDicomStringElement(0x0008, 0x1030, ''),
-    buildDicomStringElement(0x0010, 0x0010, patNameFilter),
-    buildDicomStringElement(0x0010, 0x0020, patIdFilter),
-    buildDicomStringElement(0x0010, 0x0030, ''),
-    buildDicomStringElement(0x0010, 0x0040, ''),
-    buildDicomStringElement(0x0020, 0x000D, ''),
-    buildDicomStringElement(0x0020, 0x1206, ''),
-    buildDicomStringElement(0x0020, 0x1208, '')
+    buildDicomStringElement(0x0008, 0x0020, dateFilter),           // StudyDate
+    buildDicomStringElement(0x0008, 0x0030, ''),                   // StudyTime
+    buildDicomStringElement(0x0008, 0x0050, accFilter),            // AccessionNumber
+    buildDicomStringElement(0x0008, 0x0052, 'STUDY'),              // QueryRetrieveLevel
+    buildDicomStringElement(0x0008, 0x0061, modalityFilter),       // ModalitiesInStudy
+    buildDicomStringElement(0x0008, 0x1030, ''),                   // StudyDescription
+    buildDicomStringElement(0x0010, 0x0010, patNameFilter),        // PatientName
+    buildDicomStringElement(0x0010, 0x0020, patIdFilter),          // PatientID
+    buildDicomStringElement(0x0010, 0x0030, ''),                   // PatientBirthDate
+    buildDicomStringElement(0x0010, 0x0040, ''),                   // PatientSex
+    buildDicomStringElement(0x0020, 0x000D, ''),                   // StudyInstanceUID
+    buildDicomStringElement(0x0020, 0x1206, ''),                   // NumberOfStudyRelatedSeries
+    buildDicomStringElement(0x0020, 0x1208, '')                    // NumberOfStudyRelatedInstances
   ];
 
-  const rawData = Buffer.concat(dataElems);
+  const rawData = assembleDicomDataset(dataElems);
   const dataPdu = Buffer.alloc(6 + 4 + 2 + rawData.length);
   dataPdu[0] = PDU_P_DATA_TF;
   dataPdu[1] = 0x00;
@@ -755,7 +771,7 @@ function buildCMoveRq(pcId, sopClassUid, studyInstanceUid, moveDestination, mess
     buildDicomStringElement(0x0008, 0x0052, 'STUDY'),
     buildDicomStringElement(0x0020, 0x000D, studyInstanceUid)
   ];
-  const rawData = Buffer.concat(dataElems);
+  const rawData = assembleDicomDataset(dataElems);
   const dataPdu = Buffer.alloc(6 + 4 + 2 + rawData.length);
   dataPdu[0] = PDU_P_DATA_TF;
   dataPdu[1] = 0x00;
@@ -828,16 +844,16 @@ function buildCFindSeriesRq(pcId, sopClassUid, studyInstanceUid, messageId = 1) 
   fullCmd.copy(cmdPdu, 12);
 
   const dataElems = [
-    buildDicomStringElement(0x0008, 0x0052, 'SERIES'),
-    buildDicomStringElement(0x0020, 0x000D, studyInstanceUid),
-    buildDicomStringElement(0x0020, 0x000E, ''),
-    buildDicomStringElement(0x0020, 0x0011, ''),
-    buildDicomStringElement(0x0008, 0x103E, ''),
-    buildDicomStringElement(0x0008, 0x0060, ''),
-    buildDicomStringElement(0x0020, 0x1209, '')
+    buildDicomStringElement(0x0008, 0x0052, 'SERIES'),             // QueryRetrieveLevel
+    buildDicomStringElement(0x0008, 0x0060, ''),                   // Modality
+    buildDicomStringElement(0x0008, 0x103E, ''),                   // SeriesDescription
+    buildDicomStringElement(0x0020, 0x000D, studyInstanceUid),     // StudyInstanceUID
+    buildDicomStringElement(0x0020, 0x000E, ''),                   // SeriesInstanceUID
+    buildDicomStringElement(0x0020, 0x0011, ''),                   // SeriesNumber
+    buildDicomStringElement(0x0020, 0x1209, '')                    // NumberOfSeriesRelatedInstances
   ];
 
-  const rawData = Buffer.concat(dataElems);
+  const rawData = assembleDicomDataset(dataElems);
   const dataPdu = Buffer.alloc(6 + 4 + 2 + rawData.length);
   dataPdu[0] = PDU_P_DATA_TF;
   dataPdu[1] = 0x00;
@@ -876,7 +892,7 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
 
     socket.connect(port, host, () => {
       const pdu = buildAssociateRq(callingAe, calledAe, [
-        { id: 1, abstractSyntax: SOP_STUDY_ROOT_FIND, transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] }
+        { id: 1, abstractSyntax: SOP_STUDY_ROOT_FIND, transferSyntaxes: [TS_IMPLICIT_VR_LE] }
       ]);
       socket.write(pdu);
     });
@@ -1020,7 +1036,7 @@ function buildCGetRq(pcId, sopClassUid, studyInstanceUid, seriesInstanceUid = ''
     buildDicomStringElement(0x0020, 0x000D, studyInstanceUid)
   ];
 
-  const rawData = Buffer.concat(dataElems);
+  const rawData = assembleDicomDataset(dataElems);
   const dataPdu = Buffer.alloc(6 + 4 + 2 + rawData.length);
   dataPdu[0] = PDU_P_DATA_TF;
   dataPdu[1] = 0x00;
@@ -1139,15 +1155,15 @@ function searchDicomStudies(serverConfig, filters = {}) {
       const pdu = buildAssociateRq(callingAe, calledAe, [
         {
           abstractSyntax: SOP_STUDY_ROOT_FIND,
-          transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE]
+          transferSyntaxes: [TS_IMPLICIT_VR_LE]
         },
         {
           abstractSyntax: SOP_PATIENT_ROOT_FIND,
-          transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE]
+          transferSyntaxes: [TS_IMPLICIT_VR_LE]
         },
         {
           abstractSyntax: SOP_VERIFICATION,
-          transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE]
+          transferSyntaxes: [TS_IMPLICIT_VR_LE]
         }
       ]);
       socket.write(pdu);
@@ -1200,7 +1216,7 @@ function searchDicomStudies(serverConfig, filters = {}) {
                 }
               }
 
-              if (statusNum === 0x0000 || statusNum === 0) {
+              if (statusNum !== 0xFF00 && statusNum !== 0xFF01 && statusNum !== 0xFFFF) {
                 clearTimeout(timer);
                 try { socket.write(buildReleaseRq()); } catch (e) {}
                 socket.destroy();
@@ -1323,8 +1339,8 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
     };
 
     const presentationContexts = [
-      { id: 1, abstractSyntax: '1.2.840.10008.5.1.4.1.2.2.2', transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] },
-      { id: 3, abstractSyntax: SOP_STUDY_ROOT_GET, transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] }
+      { id: 1, abstractSyntax: '1.2.840.10008.5.1.4.1.2.2.2', transferSyntaxes: [TS_IMPLICIT_VR_LE] },
+      { id: 3, abstractSyntax: SOP_STUDY_ROOT_GET, transferSyntaxes: [TS_IMPLICIT_VR_LE] }
     ];
 
     STORAGE_SOP_CLASSES.forEach((sop, i) => {

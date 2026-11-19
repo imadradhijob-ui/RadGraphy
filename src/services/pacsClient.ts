@@ -530,8 +530,12 @@ export class PacsService {
                   }
                 }
               }
+            } else {
+              console.warn('[PACS Client] Received buffer was not identified as valid DICOM:', f.fileName);
             }
-          } catch (e) {}
+          } catch (e) {
+            console.error('[PACS Client] Error parsing slice:', e);
+          }
         }) : null;
 
         const data = await window.electronAPI.pacsRetrieve(server, result.studyInstanceUid);
