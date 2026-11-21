@@ -24,7 +24,9 @@ import {
   User,
   Hash,
   FileText,
-  ArrowRight
+  ArrowRight,
+  Shield,
+  Lock
 } from 'lucide-react';
 import { DicomStudy, PacsSearchResult, PacsServerConfig } from '../types/dicom';
 import { PacsService } from '../services/pacsClient';
@@ -78,7 +80,9 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
     port: 2025,
     cStorePort: 11112,
     retrieveMethod: 'c-get',
-    protocol: 'dimse'
+    protocol: 'dimse',
+    useTls: false,
+    concurrentConnections: 4
   });
 
   // Editing server state
@@ -267,7 +271,9 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
       ...server,
       callingAeTitle: (server.callingAeTitle || 'RADNODE_VIEWER').trim(),
       cStorePort: server.cStorePort || 11112,
-      retrieveMethod: server.retrieveMethod || 'c-get'
+      retrieveMethod: server.retrieveMethod || 'c-get',
+      useTls: !!server.useTls,
+      concurrentConnections: server.concurrentConnections || 4
     });
     setIsAddingServer(false);
   };
@@ -309,6 +315,8 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
       cStorePort: Number(editForm.cStorePort) || 11112,
       retrieveMethod: editForm.retrieveMethod || 'c-get',
       protocol: editForm.protocol || 'dimse',
+      useTls: !!editForm.useTls,
+      concurrentConnections: Number(editForm.concurrentConnections) || 4,
       wadoUrl: editForm.wadoUrl?.trim(),
       qidoUrl: editForm.qidoUrl?.trim()
     };
@@ -359,6 +367,8 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
       cStorePort: Number(newServer.cStorePort) || 11112,
       retrieveMethod: newServer.retrieveMethod || 'c-get',
       protocol: (newServer.protocol as any) || 'dimse',
+      useTls: !!newServer.useTls,
+      concurrentConnections: Number(newServer.concurrentConnections) || 4,
       wadoUrl: newServer.wadoUrl?.trim(),
       qidoUrl: newServer.qidoUrl?.trim()
     };
@@ -803,6 +813,25 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
               )}
             </div>
 
+            {/* Background C-STORE SCP Daemon Status Badge */}
+            <div className="bg-slate-900/80 border border-slate-800 rounded-xl p-3 flex items-center justify-between shadow-sm">
+              <div className="flex items-center gap-2.5">
+                <span className="relative flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                </span>
+                <div>
+                  <div className="text-xs font-bold text-slate-200 flex items-center gap-2">
+                    <span>Background C-STORE SCP Daemon</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 font-mono font-bold">Active &amp; Listening</span>
+                  </div>
+                  <div className="text-[10.5px] text-slate-400 font-mono">
+                    Listening on <strong className="text-emerald-400">0.0.0.0:11112</strong> • Calling AE: <strong className="text-amber-300">RADNODE_VIEWER</strong> (Ready for incoming C-MOVE sub-operations &amp; direct push)
+                  </div>
+                </div>
+              </div>
+            </div>
+
             {/* Server operation feedback banner */}
             {serverSuccessToast && (
               <div className="bg-emerald-950/80 border border-emerald-500/50 text-emerald-300 px-3.5 py-2.5 rounded-lg text-xs font-semibold flex items-center gap-2 shadow-md">
@@ -926,6 +955,35 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       <option value="dimse">DICOM DIMSE (Standard TCP Network)</option>
                       <option value="dicomweb">DICOMweb (RESTful HTTP/WADO)</option>
                     </select>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-300 font-semibold block mb-1">Parallel Streams (Worker Pool):</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="8"
+                      value={editForm.concurrentConnections !== undefined && editForm.concurrentConnections !== null ? editForm.concurrentConnections : 4}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setEditForm({ ...editForm, concurrentConnections: isNaN(val) ? 4 : Math.min(8, Math.max(1, val)) });
+                      }}
+                      placeholder="4 (1-8 streams)"
+                      className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-amber-300 font-mono focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-5">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={!!editForm.useTls}
+                        onChange={(e) => setEditForm({ ...editForm, useTls: e.target.checked })}
+                        className="w-4 h-4 rounded border-radiant-border text-cyan-500 focus:ring-0 focus:outline-none"
+                      />
+                      <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>DICOM TLS (Part 15 Encryption)</span>
+                    </label>
                   </div>
 
                   {editForm.protocol === 'dicomweb' && (
@@ -1103,6 +1161,35 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                       <option value="dicomweb">DICOMweb (WADO-RS / QIDO-RS)</option>
                     </select>
                   </div>
+
+                  <div>
+                    <label className="text-[11px] text-slate-300 font-semibold block mb-1">Parallel Streams (Worker Pool):</label>
+                    <input
+                      type="number"
+                      min="1"
+                      max="8"
+                      value={newServer.concurrentConnections !== undefined && newServer.concurrentConnections !== null ? newServer.concurrentConnections : 4}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        setNewServer({ ...newServer, concurrentConnections: isNaN(val) ? 4 : Math.min(8, Math.max(1, val)) });
+                      }}
+                      placeholder="4 (1-8 streams)"
+                      className="w-full bg-radiant-darkest border border-radiant-border rounded p-1.5 text-xs text-amber-300 font-mono focus:border-cyan-400 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-2 pt-5">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-200">
+                      <input
+                        type="checkbox"
+                        checked={!!newServer.useTls}
+                        onChange={(e) => setNewServer({ ...newServer, useTls: e.target.checked })}
+                        className="w-4 h-4 rounded border-radiant-border text-cyan-500 focus:ring-0 focus:outline-none"
+                      />
+                      <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                      <span>DICOM TLS (Part 15 Encryption)</span>
+                    </label>
+                  </div>
                 </div>
 
                 <div className="flex justify-end gap-2 pt-2 border-t border-radiant-border">
@@ -1149,6 +1236,15 @@ export const PacsManagerModal: React.FC<PacsManagerModalProps> = ({
                         </span>
                         <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-blue-950 text-blue-300 border border-blue-800">
                           {(s.retrieveMethod || 'c-move').toUpperCase()}
+                        </span>
+                        {s.useTls && (
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-emerald-950/80 text-emerald-300 border border-emerald-600/40 flex items-center gap-1">
+                            <Lock className="w-2.5 h-2.5" />
+                            TLS Part 15
+                          </span>
+                        )}
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-amber-950/60 text-amber-300 border border-amber-600/30">
+                          {s.concurrentConnections || 4}x Streams
                         </span>
                         {s.id === selectedServerId && (
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-800">

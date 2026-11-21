@@ -2,7 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 const fs = require('fs');
-const { testDicomEcho, searchDicomStudies, retrieveDicomStudy } = require('./dicomNetwork.cjs');
+const {
+  testDicomEcho,
+  searchDicomStudies,
+  retrieveDicomStudy,
+  storeDicomInstances,
+  startCStoreServer,
+  getCStoreStatus,
+  registerCStoreSliceCallback
+} = require('./dicomNetwork.cjs');
 
 // High-performance V8 flags for large medical DICOM volumes (4GB heap, aggressive GC)
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
@@ -167,7 +175,9 @@ function createWindow() {
   const isDev = process.env.NODE_ENV === 'development' || (!app.isPackaged && !process.env.IS_PACKAGED);
 
   if (isDev && !app.isPackaged) {
-    mainWindow.loadURL('http://localhost:5173');
+    mainWindow.loadURL('http://localhost:5173').catch(() => {
+      mainWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'));
+    });
   } else {
     mainWindow.loadFile(path.join(app.getAppPath(), 'dist/index.html'));
   }
@@ -176,6 +186,20 @@ function createWindow() {
 app.whenReady().then(() => {
   writeToLog('APP_LIFECYCLE', 'app "ready" event triggered');
   createWindow();
+
+  // Start background C-STORE SCP daemon on default port 11112 for C-MOVE and push transfers
+  try {
+    startCStoreServer(11112, 'RADNODE_VIEWER');
+    registerCStoreSliceCallback((slice) => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        try {
+          mainWindow.webContents.send('pacs:slice', slice);
+        } catch (e) {}
+      }
+    });
+  } catch (err) {
+    writeToLog('CSTORE_SCP', 'Failed to start C-STORE listener: ' + (err && err.message));
+  }
 
   app.on('activate', () => {
     writeToLog('APP_LIFECYCLE', 'app "activate" event triggered');
@@ -477,6 +501,14 @@ ipcMain.handle('pacs:retrieve', async (event, serverConfig, studyInstanceUid) =>
       event.sender.send('pacs:slice', slice);
     } catch (e) {}
   });
+});
+
+ipcMain.handle('pacs:store', async (event, serverConfig, instances) => {
+  return storeDicomInstances(serverConfig, instances);
+});
+
+ipcMain.handle('pacs:cstore-status', async () => {
+  return getCStoreStatus();
 });
 
 // Window Control Handlers

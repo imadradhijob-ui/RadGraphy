@@ -1,4 +1,25 @@
 const net = require('net');
+const tls = require('tls');
+
+/**
+ * Creates a standard TCP socket or secure TLS socket for DICOM Part 15 communications
+ */
+function createDicomSocket(serverConfig, onConnect) {
+  const host = (serverConfig && serverConfig.host) || '127.0.0.1';
+  const port = Number(serverConfig && serverConfig.port) || 104;
+  if (serverConfig && serverConfig.useTls) {
+    const sock = tls.connect(port, host, {
+      rejectUnauthorized: false, // Accepts hospital internal / self-signed TLS certificates
+      minVersion: 'TLSv1.2'
+    }, onConnect);
+    sock.setNoDelay(true);
+    return sock;
+  }
+  const sock = new net.Socket();
+  sock.setNoDelay(true);
+  sock.connect(port, host, onConnect);
+  return sock;
+}
 
 /**
  * DICOM Upper Layer Protocol (DULP) & DIMSE implementation for Node.js / Electron
@@ -472,7 +493,6 @@ function testDicomEcho(serverConfig) {
     const calledAe = serverConfig.aeTitle || 'INFOMED';
     const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
-    const socket = new net.Socket();
     let state = 'CONNECTING';
     let echoSent = false;
     let timer = setTimeout(() => {
@@ -484,7 +504,7 @@ function testDicomEcho(serverConfig) {
       });
     }, 4500);
 
-    socket.connect(port, host, () => {
+    const socket = createDicomSocket(serverConfig, () => {
       state = 'ASSOCIATING';
       const pdu = buildAssociateRq(callingAe, calledAe, [
         {
@@ -876,8 +896,6 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
     const calledAe = serverConfig.aeTitle || 'INFOMED';
     const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
-    const socket = new net.Socket();
-    socket.setNoDelay(true);
     const seriesList = [];
     let isDone = false;
 
@@ -890,7 +908,7 @@ function querySeriesInStudy(serverConfig, studyInstanceUid) {
 
     let timer = setTimeout(finish, 15000);
 
-    socket.connect(port, host, () => {
+    const socket = createDicomSocket(serverConfig, () => {
       const pdu = buildAssociateRq(callingAe, calledAe, [
         { id: 1, abstractSyntax: SOP_STUDY_ROOT_FIND, transferSyntaxes: [TS_IMPLICIT_VR_LE] }
       ]);
@@ -1124,7 +1142,6 @@ function searchDicomStudies(serverConfig, filters = {}) {
     const calledAe = serverConfig.aeTitle || 'INFOMED';
     const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
-    const socket = new net.Socket();
     let querySent = false;
     let acceptedPcId = 1;
     let acceptedSop = SOP_STUDY_ROOT_FIND;
@@ -1151,7 +1168,7 @@ function searchDicomStudies(serverConfig, filters = {}) {
       resolve(finalizeResults());
     }, 10000);
 
-    socket.connect(port, host, () => {
+    const socket = createDicomSocket(serverConfig, () => {
       const pdu = buildAssociateRq(callingAe, calledAe, [
         {
           abstractSyntax: SOP_STUDY_ROOT_FIND,
@@ -1316,10 +1333,6 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
     const calledAe = serverConfig.aeTitle || 'INFOMED';
     const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
 
-    const socket = new net.Socket();
-    socket.setNoDelay(true);
-    socket.setKeepAlive(true, 1000);
-
     const received = [];
     let isFinished = false;
 
@@ -1358,7 +1371,7 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
       });
     });
 
-    socket.connect(port, host, () => {
+    const socket = createDicomSocket(serverConfig, () => {
       const pdu = buildAssociateRq(callingAe, calledAe, presentationContexts);
       socket.write(pdu);
     });
@@ -1470,12 +1483,701 @@ function retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, seriesUid, o
 }
 
 /**
- * Retrieves full real DICOM studies via RadiAnt Architecture (Study-Root C-GET with fallback)
+ * Parses proposed Presentation Contexts from an incoming A-ASSOCIATE-RQ payload
+ */
+function parseAssociateRqPresentationContexts(payload) {
+  // payload begins after the 68-byte fixed associate RQ header
+  let off = 68;
+  const pcs = [];
+  while (off + 4 <= payload.length) {
+    const itemType = payload[off];
+    const itemLen = payload.readUInt16BE(off + 2);
+    const itemEnd = Math.min(payload.length, off + 4 + itemLen);
+
+    if (itemType === 0x20) { // Presentation Context Item
+      const pcId = payload[off + 4];
+      let subOff = off + 8;
+      let abstractSyntax = '';
+      const transferSyntaxes = [];
+
+      while (subOff + 4 <= itemEnd) {
+        const subType = payload[subOff];
+        const subLen = payload.readUInt16BE(subOff + 2);
+        const subEnd = Math.min(itemEnd, subOff + 4 + subLen);
+
+        if (subType === 0x30) { // Abstract Syntax (SOP Class UID)
+          abstractSyntax = payload.toString('ascii', subOff + 4, subEnd).replace(/\0+$/, '').trim();
+        } else if (subType === 0x40) { // Transfer Syntax
+          const ts = payload.toString('ascii', subOff + 4, subEnd).replace(/\0+$/, '').trim();
+          transferSyntaxes.push(ts);
+        }
+        subOff = subEnd;
+      }
+      pcs.push({ id: pcId, abstractSyntax, transferSyntaxes });
+    }
+    off = itemEnd;
+  }
+  return pcs;
+}
+
+// Global state for C-STORE SCP Server Daemon
+let activeCStoreServer = null;
+let activeCStorePort = 11112;
+const cStoreSliceCallbacks = new Set();
+
+/**
+ * Registers a callback to receive slices arriving at the local C-STORE SCP
+ */
+function registerCStoreSliceCallback(callback) {
+  cStoreSliceCallbacks.add(callback);
+  return () => {
+    cStoreSliceCallbacks.delete(callback);
+  };
+}
+
+/**
+ * Starts or reconfigures the background C-STORE SCP daemon listening for incoming C-STORE operations
+ */
+function startCStoreServer(port = 11112, serverAe = 'RADNODE_VIEWER') {
+  const targetPort = Number(port) || 11112;
+  const callingAe = (serverAe || 'RADNODE_VIEWER').trim();
+
+  if (activeCStoreServer && activeCStorePort === targetPort) {
+    return activeCStoreServer;
+  }
+
+  if (activeCStoreServer) {
+    try {
+      activeCStoreServer.close();
+    } catch (e) {}
+    activeCStoreServer = null;
+  }
+
+  activeCStorePort = targetPort;
+
+  const server = net.createServer((socket) => {
+    socket.setNoDelay(true);
+
+    let clientBuffer = Buffer.alloc(0);
+    let currentCmd = { msgId: 1, sopClass: '', sopInstance: '' };
+    let activeFragments = [];
+    let remoteCallingAe = 'UNKNOWN_PACS';
+
+    socket.on('data', (chunk) => {
+      clientBuffer = Buffer.concat([clientBuffer, chunk]);
+
+      while (clientBuffer.length >= 6) {
+        const pduType = clientBuffer[0];
+        const pduLen = clientBuffer.readUInt32BE(2);
+        if (clientBuffer.length < 6 + pduLen) break;
+
+        const pduPayload = clientBuffer.slice(6, 6 + pduLen);
+        const remBuf = clientBuffer.slice(6 + pduLen);
+        clientBuffer = remBuf.length === 0 ? Buffer.alloc(0) : Buffer.from(remBuf);
+
+        if (pduType === PDU_A_ASSOCIATE_RQ) {
+          // Extract remote calling AE (bytes 26-41 in A-ASSOCIATE-RQ)
+          if (pduPayload.length >= 42) {
+            remoteCallingAe = pduPayload.toString('ascii', 26, 42).trim();
+          }
+          console.log(`[C-STORE SCP Daemon] Incoming association request from "${remoteCallingAe}"...`);
+
+          const proposedPcs = parseAssociateRqPresentationContexts(pduPayload);
+          const acceptedPcs = [];
+
+          for (const pc of proposedPcs) {
+            // Select best supported transfer syntax
+            let chosenTs = TS_EXPLICIT_VR_LE;
+            if (pc.transferSyntaxes && pc.transferSyntaxes.length > 0) {
+              if (pc.transferSyntaxes.includes(TS_EXPLICIT_VR_LE)) {
+                chosenTs = TS_EXPLICIT_VR_LE;
+              } else if (pc.transferSyntaxes.includes(TS_IMPLICIT_VR_LE)) {
+                chosenTs = TS_IMPLICIT_VR_LE;
+              } else {
+                chosenTs = pc.transferSyntaxes[0];
+              }
+            }
+            acceptedPcs.push({
+              id: pc.id,
+              transferSyntax: chosenTs
+            });
+          }
+
+          const associateAc = buildAssociateAc(callingAe, remoteCallingAe, acceptedPcs);
+          socket.write(associateAc);
+          console.log(`[C-STORE SCP Daemon] Association accepted (${acceptedPcs.length} presentation contexts).`);
+        } else if (pduType === PDU_P_DATA_TF) {
+          let off = 0;
+          while (off + 6 <= pduPayload.length) {
+            const pdvLen = pduPayload.readUInt32BE(off);
+            const pdvPcId = pduPayload[off + 4];
+            const controlHeader = pduPayload[off + 5];
+            const isCommand = (controlHeader & 0x01) === 0x01;
+            const isLast = (controlHeader & 0x02) === 0x02;
+            const pdvData = pduPayload.slice(off + 6, off + 4 + pdvLen);
+            off += 4 + pdvLen;
+
+            if (isCommand) {
+              const cmdMap = parseDicomDataset(pdvData);
+              const cmdField = cmdMap['(0000,0100)'];
+              if (cmdField === 1 || cmdField === 0x0001) {
+                currentCmd = {
+                  msgId: cmdMap['(0000,0110)'] || 1,
+                  sopClass: cmdMap['(0000,0002)'] || '',
+                  sopInstance: cmdMap['(0000,1000)'] || ''
+                };
+              }
+            } else {
+              activeFragments.push(pdvData);
+              if (isLast) {
+                const fullBuf = Buffer.concat(activeFragments);
+                activeFragments = [];
+
+                const p10Buf = makeDicomPart10Buffer(fullBuf, currentCmd.sopClass, currentCmd.sopInstance);
+                const fileObj = {
+                  fileName: `${currentCmd.sopInstance || `inst_${Date.now()}`}.dcm`,
+                  buffer: p10Buf.toString('base64'),
+                  size: p10Buf.length,
+                  sopClassUid: currentCmd.sopClass,
+                  sopInstanceUid: currentCmd.sopInstance
+                };
+
+                // Emit slice to all registered callbacks
+                for (const cb of cStoreSliceCallbacks) {
+                  try {
+                    cb(fileObj);
+                  } catch (e) {
+                    console.warn('[C-STORE SCP Daemon] Slice callback error:', e);
+                  }
+                }
+
+                // Send C-STORE-RSP (0x0000 = Success)
+                const rspPdu = buildCStoreRsp(pdvPcId, currentCmd.msgId || 1, 0x0000, currentCmd.sopClass, currentCmd.sopInstance);
+                socket.write(rspPdu);
+              }
+            }
+          }
+        } else if (pduType === PDU_A_RELEASE_RQ) {
+          console.log(`[C-STORE SCP Daemon] Association release requested by "${remoteCallingAe}".`);
+          try {
+            socket.write(buildReleaseRp());
+          } catch (e) {}
+          setTimeout(() => {
+            try { socket.end(); } catch (e) {}
+          }, 50);
+        } else if (pduType === PDU_A_ABORT) {
+          console.log(`[C-STORE SCP Daemon] Association aborted by "${remoteCallingAe}".`);
+          try { socket.destroy(); } catch (e) {}
+        }
+      }
+    });
+
+    socket.on('error', (err) => {
+      console.warn('[C-STORE SCP Daemon] Connection error:', err.message);
+      try { socket.destroy(); } catch (e) {}
+    });
+  });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[C-STORE SCP Daemon] Port ${targetPort} is already in use by another instance or process.`);
+    } else {
+      console.warn('[C-STORE SCP Daemon] Server error:', err.message);
+    }
+  });
+
+  server.listen(targetPort, '0.0.0.0', () => {
+    console.log(`[C-STORE SCP Daemon] Listening on 0.0.0.0:${targetPort} (AE: ${callingAe})`);
+  });
+
+  activeCStoreServer = server;
+  return server;
+}
+
+/**
+ * Returns current status of C-STORE SCP Daemon
+ */
+function getCStoreStatus() {
+  return {
+    running: activeCStoreServer !== null && activeCStoreServer.listening,
+    port: activeCStorePort
+  };
+}
+
+/**
+ * Executes a C-MOVE sub-operation against PACS server
+ */
+function executeCMove(serverConfig, studyInstanceUid, seriesUid = '', onSlice = null) {
+  return new Promise((resolve) => {
+    const cStorePort = Number(serverConfig.cStorePort) || 11112;
+    const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
+    const calledAe = serverConfig.aeTitle || 'INFOMED';
+
+    // Ensure local C-STORE SCP is active to accept slices
+    startCStoreServer(cStorePort, callingAe);
+
+    let unregisterSlice = null;
+    let receivedCount = 0;
+    if (typeof onSlice === 'function') {
+      unregisterSlice = registerCStoreSliceCallback((slice) => {
+        receivedCount++;
+        slice.index = receivedCount;
+        onSlice(slice);
+      });
+    }
+
+    let socket;
+    let isDone = false;
+    let timer = setTimeout(() => {
+      finish(new Error('C-MOVE Request Timed Out (45s)'));
+    }, 45000);
+
+    function finish(err = null) {
+      if (isDone) return;
+      isDone = true;
+      clearTimeout(timer);
+      if (unregisterSlice) {
+        unregisterSlice();
+        unregisterSlice = null;
+      }
+      if (socket) {
+        try { socket.destroy(); } catch (e) {}
+      }
+      if (err) {
+        resolve({ success: false, count: receivedCount, error: err.message });
+      } else {
+        resolve({ success: true, count: receivedCount });
+      }
+    }
+
+    socket = createDicomSocket(serverConfig, () => {
+      const pdu = buildAssociateRq(callingAe, calledAe, [
+        { id: 1, abstractSyntax: SOP_STUDY_ROOT_MOVE, transferSyntaxes: [TS_IMPLICIT_VR_LE, TS_EXPLICIT_VR_LE] }
+      ]);
+      socket.write(pdu);
+    });
+
+    let clientBuffer = Buffer.alloc(0);
+
+    socket.on('data', (chunk) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => finish(null), 25000);
+
+      clientBuffer = Buffer.concat([clientBuffer, chunk]);
+
+      while (clientBuffer.length >= 6) {
+        const pduType = clientBuffer[0];
+        const pduLen = clientBuffer.readUInt32BE(2);
+        if (clientBuffer.length < 6 + pduLen) break;
+
+        const pduPayload = clientBuffer.slice(6, 6 + pduLen);
+        const remBuf = clientBuffer.slice(6 + pduLen);
+        clientBuffer = remBuf.length === 0 ? Buffer.alloc(0) : Buffer.from(remBuf);
+
+        if (pduType === PDU_A_ASSOCIATE_AC) {
+          console.log(`[C-MOVE Association Established] Requesting C-MOVE for study ${studyInstanceUid} to destination ${callingAe}...`);
+          const cMovePdu = buildCMoveRq(1, SOP_STUDY_ROOT_MOVE, studyInstanceUid, callingAe, 1);
+          socket.write(cMovePdu);
+        } else if (pduType === PDU_P_DATA_TF) {
+          let off = 0;
+          while (off + 6 <= pduPayload.length) {
+            const pdvLen = pduPayload.readUInt32BE(off);
+            const controlHeader = pduPayload[off + 5];
+            const isCommand = (controlHeader & 0x01) === 0x01;
+            const pdvData = pduPayload.slice(off + 6, off + 4 + pdvLen);
+            off += 4 + pdvLen;
+
+            if (isCommand) {
+              const cmdMap = parseDicomDataset(pdvData);
+              const cmdField = cmdMap['(0000,0100)'];
+              const status = cmdMap['(0000,0900)'];
+              if (cmdField === 0x8021) { // C-MOVE-RSP
+                const remaining = cmdMap['(0000,1020)'] ?? 0;
+                const completed = cmdMap['(0000,1021)'] ?? 0;
+                console.log(`[C-MOVE-RSP] Status: 0x${(status || 0).toString(16)}, Completed: ${completed}, Remaining: ${remaining}`);
+                if (status !== 0xFF00 && status !== 0xFF01) {
+                  console.log(`[C-MOVE Complete] Final status: 0x${(status || 0).toString(16)}`);
+                  try { socket.write(buildReleaseRq()); } catch (e) {}
+                  setTimeout(() => finish(null), 100);
+                  return;
+                }
+              }
+            }
+          }
+        } else if (pduType === PDU_A_ASSOCIATE_RJ || pduType === PDU_A_ABORT || pduType === PDU_A_RELEASE_RP) {
+          finish(pduType === PDU_A_RELEASE_RP ? null : new Error(`Association closed (0x${pduType.toString(16)})`));
+        }
+      }
+    });
+
+    socket.on('error', (err) => finish(err));
+    socket.on('close', () => finish(null));
+  });
+}
+
+/**
+ * Extracts raw dataset and SOP identity from Part 10 DICOM buffer
+ */
+function extractRawDatasetFromPart10(p10Buf) {
+  let offset = 0;
+  let sopClassUid = '';
+  let sopInstanceUid = '';
+
+  // Check for 128-byte preamble + 'DICM'
+  if (p10Buf.length >= 132 &&
+      p10Buf[128] === 0x44 && p10Buf[129] === 0x49 &&
+      p10Buf[130] === 0x43 && p10Buf[131] === 0x4D) {
+    offset = 132;
+    // Iterate Group 0002 elements (File Meta Information) - always Explicit VR Little Endian
+    while (offset + 8 <= p10Buf.length) {
+      const group = p10Buf.readUInt16LE(offset);
+      if (group !== 0x0002) {
+        break; // Reached main dataset
+      }
+      const element = p10Buf.readUInt16LE(offset + 2);
+      const vr = p10Buf.toString('ascii', offset + 4, offset + 6);
+      let valLen = 0;
+      let headerLen = 8;
+      if (['OB', 'OW', 'OF', 'OD', 'SQ', 'UC', 'UR', 'UT', 'UN'].includes(vr)) {
+        valLen = p10Buf.readUInt32LE(offset + 8);
+        headerLen = 12;
+      } else {
+        valLen = p10Buf.readUInt16LE(offset + 6);
+      }
+
+      const valOffset = offset + headerLen;
+      const valEnd = Math.min(p10Buf.length, valOffset + valLen);
+
+      // (0002,0002) MediaStorageSOPClassUID
+      if (element === 0x0002) {
+        sopClassUid = p10Buf.toString('ascii', valOffset, valEnd).replace(/\0+$/, '').trim();
+      }
+      // (0002,0003) MediaStorageSOPInstanceUID
+      else if (element === 0x0003) {
+        sopInstanceUid = p10Buf.toString('ascii', valOffset, valEnd).replace(/\0+$/, '').trim();
+      }
+
+      if (valLen < 0 || isNaN(valLen)) {
+        offset += headerLen;
+        continue;
+      }
+      offset = Math.max(offset + headerLen, valEnd);
+    }
+  }
+
+  const rawDataset = p10Buf.slice(offset);
+
+  // If SOP UIDs were not found in group 0002, read from dataset
+  if (!sopClassUid || !sopInstanceUid) {
+    const dsMap = parseDicomDataset(rawDataset);
+    if (!sopClassUid) sopClassUid = dsMap['(0008,0016)'] || '1.2.840.10008.5.1.4.1.1.2';
+    if (!sopInstanceUid) sopInstanceUid = dsMap['(0008,0018)'] || `1.2.826.0.1.3680043.9.${Date.now()}`;
+  }
+
+  return {
+    rawDataset,
+    sopClassUid,
+    sopInstanceUid
+  };
+}
+
+/**
+ * Streams C-STORE-RQ command and dataset PDVs to PACS, strictly adhering to Max PDU size and socket backpressure
+ */
+function streamCStoreInstance(socket, pcId, sopClassUid, sopInstanceUid, rawDataset, messageId = 1) {
+  return new Promise((resolve, reject) => {
+    const cmdBufs = [];
+
+    // (0000,0002) Affected SOP Class UID
+    let sopBuf = Buffer.from(sopClassUid, 'ascii');
+    if (sopBuf.length % 2 !== 0) sopBuf = Buffer.concat([sopBuf, Buffer.from([0x00])]);
+    const sopElem = Buffer.alloc(8 + sopBuf.length);
+    sopElem.writeUInt16LE(0x0000, 0);
+    sopElem.writeUInt16LE(0x0002, 2);
+    sopElem.writeUInt32LE(sopBuf.length, 4);
+    sopBuf.copy(sopElem, 8);
+    cmdBufs.push(sopElem);
+
+    // (0000,0100) Command Field: US 0x0001 (C-STORE-RQ)
+    const cmdField = Buffer.alloc(10);
+    cmdField.writeUInt16LE(0x0000, 0);
+    cmdField.writeUInt16LE(0x0100, 2);
+    cmdField.writeUInt32LE(2, 4);
+    cmdField.writeUInt16LE(0x0001, 8);
+    cmdBufs.push(cmdField);
+
+    // (0000,0110) Message ID
+    const msgIdElem = Buffer.alloc(10);
+    msgIdElem.writeUInt16LE(0x0000, 0);
+    msgIdElem.writeUInt16LE(0x0110, 2);
+    msgIdElem.writeUInt32LE(2, 4);
+    msgIdElem.writeUInt16LE(messageId, 8);
+    cmdBufs.push(msgIdElem);
+
+    // (0000,0700) Priority: US 0x0000 (Medium)
+    const prioElem = Buffer.alloc(10);
+    prioElem.writeUInt16LE(0x0000, 0);
+    prioElem.writeUInt16LE(0x0700, 2);
+    prioElem.writeUInt32LE(2, 4);
+    prioElem.writeUInt16LE(0x0000, 8);
+    cmdBufs.push(prioElem);
+
+    // (0000,0800) Data Set Type: US 0x0001 (Dataset Present)
+    const dsElem = Buffer.alloc(10);
+    dsElem.writeUInt16LE(0x0000, 0);
+    dsElem.writeUInt16LE(0x0800, 2);
+    dsElem.writeUInt32LE(2, 4);
+    dsElem.writeUInt16LE(0x0001, 8);
+    cmdBufs.push(dsElem);
+
+    // (0000,1000) Affected SOP Instance UID
+    let instBuf = Buffer.from(sopInstanceUid, 'ascii');
+    if (instBuf.length % 2 !== 0) instBuf = Buffer.concat([instBuf, Buffer.from([0x00])]);
+    const instElem = Buffer.alloc(8 + instBuf.length);
+    instElem.writeUInt16LE(0x0000, 0);
+    instElem.writeUInt16LE(0x1000, 2);
+    instElem.writeUInt32LE(instBuf.length, 4);
+    instBuf.copy(instElem, 8);
+    cmdBufs.push(instElem);
+
+    // Group Length (0000,0000)
+    const rawCmd = Buffer.concat(cmdBufs);
+    const fullCmd = Buffer.alloc(12 + rawCmd.length);
+    fullCmd.writeUInt16LE(0x0000, 0);
+    fullCmd.writeUInt16LE(0x0000, 2);
+    fullCmd.writeUInt32LE(4, 4);
+    fullCmd.writeUInt32LE(rawCmd.length, 8);
+    rawCmd.copy(fullCmd, 12);
+
+    // Command PDU (control byte 0x03 = Command + Last)
+    const cmdPdu = Buffer.alloc(6 + 4 + 2 + fullCmd.length);
+    cmdPdu[0] = PDU_P_DATA_TF;
+    cmdPdu[1] = 0x00;
+    cmdPdu.writeUInt32BE(4 + 2 + fullCmd.length, 2);
+    cmdPdu.writeUInt32BE(2 + fullCmd.length, 6);
+    cmdPdu[10] = pcId;
+    cmdPdu[11] = 0x03;
+    fullCmd.copy(cmdPdu, 12);
+
+    try {
+      socket.write(cmdPdu);
+    } catch (err) {
+      return reject(err);
+    }
+
+    // Dataset PDUs streamed with max chunk 14336 (guarantees total PDU length < 16384 max PDU size)
+    const maxChunkSize = 14336;
+    let offset = 0;
+
+    function sendChunks() {
+      while (offset < rawDataset.length) {
+        const chunkLen = Math.min(maxChunkSize, rawDataset.length - offset);
+        const isLast = (offset + chunkLen >= rawDataset.length);
+        const chunk = rawDataset.slice(offset, offset + chunkLen);
+        offset += chunkLen;
+
+        const dataPdu = Buffer.alloc(6 + 4 + 2 + chunkLen);
+        dataPdu[0] = PDU_P_DATA_TF;
+        dataPdu[1] = 0x00;
+        dataPdu.writeUInt32BE(4 + 2 + chunkLen, 2);
+        dataPdu.writeUInt32BE(2 + chunkLen, 6);
+        dataPdu[10] = pcId;
+        dataPdu[11] = isLast ? 0x02 : 0x00; // Data, isLast
+        chunk.copy(dataPdu, 12);
+
+        const canContinue = socket.write(dataPdu);
+        if (!canContinue && !isLast) {
+          socket.once('drain', sendChunks);
+          return;
+        }
+      }
+      resolve();
+    }
+
+    sendChunks();
+  });
+}
+
+/**
+ * Stores (pushes) DICOM instances to PACS server via C-STORE SCU
+ */
+async function storeDicomInstances(serverConfig, instances) {
+  if (!instances || instances.length === 0) {
+    return { success: false, error: 'No instances provided to store' };
+  }
+
+  const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
+  const calledAe = serverConfig.aeTitle || 'INFOMED';
+
+  // 1. Process instances and extract raw dataset & SOP Class UID & SOP Instance UID
+  const preparedInstances = [];
+  const sopClassMap = new Map(); // sopClassUid -> pcId
+
+  let nextPcId = 1;
+  for (const inst of instances) {
+    let p10Buf;
+    if (Buffer.isBuffer(inst.buffer)) {
+      p10Buf = inst.buffer;
+    } else if (typeof inst.buffer === 'string') {
+      p10Buf = Buffer.from(inst.buffer, 'base64');
+    } else if (inst.buffer instanceof ArrayBuffer) {
+      p10Buf = Buffer.from(inst.buffer);
+    } else {
+      continue;
+    }
+
+    const { rawDataset, sopClassUid, sopInstanceUid } = extractRawDatasetFromPart10(p10Buf);
+    if (!sopClassUid || !sopInstanceUid || !rawDataset || rawDataset.length === 0) {
+      continue;
+    }
+
+    if (!sopClassMap.has(sopClassUid)) {
+      sopClassMap.set(sopClassUid, nextPcId);
+      nextPcId += 2;
+    }
+
+    preparedInstances.push({
+      fileName: inst.fileName || `${sopInstanceUid}.dcm`,
+      sopClassUid,
+      sopInstanceUid,
+      rawDataset,
+      pcId: sopClassMap.get(sopClassUid)
+    });
+  }
+
+  if (preparedInstances.length === 0) {
+    return { success: false, error: 'Failed to parse any valid DICOM instances' };
+  }
+
+  // 2. Prepare presentation contexts for association
+  const presentationContexts = [];
+  for (const [sopClassUid, pcId] of sopClassMap.entries()) {
+    presentationContexts.push({
+      id: pcId,
+      abstractSyntax: sopClassUid,
+      transferSyntaxes: [TS_EXPLICIT_VR_LE, TS_IMPLICIT_VR_LE]
+    });
+  }
+
+  return new Promise((resolve) => {
+    const socket = createDicomSocket(serverConfig, () => {
+      const pdu = buildAssociateRq(callingAe, calledAe, presentationContexts);
+      socket.write(pdu);
+    });
+
+    let clientBuffer = Buffer.alloc(0);
+    let currentInstIndex = 0;
+    let activeMsgId = 1;
+    let storedCount = 0;
+    let failedCount = 0;
+    let isFinished = false;
+
+    let timer = setTimeout(() => {
+      cleanup(new Error('C-STORE SCU timeout (60s)'));
+    }, 60000);
+
+    function cleanup(err = null) {
+      if (isFinished) return;
+      isFinished = true;
+      clearTimeout(timer);
+      try { socket.destroy(); } catch (e) {}
+      if (err) {
+        resolve({ success: storedCount > 0, storedCount, failedCount, error: err.message });
+      } else {
+        resolve({ success: true, storedCount, failedCount });
+      }
+    }
+
+    async function sendNextInstance() {
+      if (currentInstIndex >= preparedInstances.length) {
+        console.log(`[C-STORE SCU] Successfully pushed ${storedCount} instances. Releasing association...`);
+        try { socket.write(buildReleaseRq()); } catch (e) {}
+        setTimeout(() => cleanup(null), 100);
+        return;
+      }
+
+      const inst = preparedInstances[currentInstIndex];
+      activeMsgId++;
+      console.log(`[C-STORE SCU] Sending [${currentInstIndex + 1}/${preparedInstances.length}] SOP: ${inst.sopInstanceUid}...`);
+      try {
+        await streamCStoreInstance(socket, inst.pcId, inst.sopClassUid, inst.sopInstanceUid, inst.rawDataset, activeMsgId);
+      } catch (err) {
+        cleanup(err);
+      }
+    }
+
+    socket.on('data', (chunk) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => cleanup(new Error('C-STORE SCU idle timeout (30s)')), 30000);
+
+      clientBuffer = Buffer.concat([clientBuffer, chunk]);
+
+      while (clientBuffer.length >= 6) {
+        const pduType = clientBuffer[0];
+        const pduLen = clientBuffer.readUInt32BE(2);
+        if (clientBuffer.length < 6 + pduLen) break;
+
+        const pduPayload = clientBuffer.slice(6, 6 + pduLen);
+        const remBuf = clientBuffer.slice(6 + pduLen);
+        clientBuffer = remBuf.length === 0 ? Buffer.alloc(0) : Buffer.from(remBuf);
+
+        if (pduType === PDU_A_ASSOCIATE_AC) {
+          console.log(`[C-STORE SCU] Association established with ${calledAe}. Starting push of ${preparedInstances.length} instances...`);
+          sendNextInstance();
+        } else if (pduType === PDU_P_DATA_TF) {
+          let off = 0;
+          while (off + 6 <= pduPayload.length) {
+            const pdvLen = pduPayload.readUInt32BE(off);
+            const controlHeader = pduPayload[off + 5];
+            const isCommand = (controlHeader & 0x01) === 0x01;
+            const pdvData = pduPayload.slice(off + 6, off + 4 + pdvLen);
+            off += 4 + pdvLen;
+
+            if (isCommand) {
+              const cmdMap = parseDicomDataset(pdvData);
+              const cmdField = cmdMap['(0000,0100)'];
+              const status = cmdMap['(0000,0900)'];
+              if (cmdField === 0x8001) { // C-STORE-RSP
+                if (status === 0x0000 || status === 0xB000) {
+                  storedCount++;
+                } else {
+                  console.warn(`[C-STORE SCU] Instance ${currentInstIndex + 1} rejected with status 0x${(status || 0).toString(16)}`);
+                  failedCount++;
+                }
+                currentInstIndex++;
+                sendNextInstance();
+              }
+            }
+          }
+        } else if (pduType === PDU_A_ASSOCIATE_RJ || pduType === PDU_A_ABORT || pduType === PDU_A_RELEASE_RP) {
+          cleanup(pduType === PDU_A_RELEASE_RP ? null : new Error(`Association closed (0x${pduType.toString(16)})`));
+        }
+      }
+    });
+
+    socket.on('error', (err) => cleanup(err));
+    socket.on('close', () => cleanup(null));
+  });
+}
+
+/**
+ * Retrieves full real DICOM studies via RadiAnt Architecture (Study-Root C-GET, Parallel Series pool, and C-MOVE fallback)
  */
 async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
   const isStreaming = typeof onSlice === 'function';
 
-  // 1. Discover all series under this study (for metadata and logging)
+  // If server is explicitly configured for C-MOVE, execute C-MOVE directly
+  if (serverConfig.retrieveMethod === 'c-move') {
+    console.log(`[RadiAnt Pipeline] Configured for C-MOVE. Executing C-MOVE retrieval...`);
+    const moveRes = await executeCMove(serverConfig, studyInstanceUid, '', onSlice);
+    return {
+      success: moveRes.success && moveRes.count > 0,
+      count: moveRes.count || 0,
+      files: []
+    };
+  }
+
+  // 1. Discover all series under this study (for metadata and parallel dispatch)
   let seriesList = [];
   try {
     seriesList = await querySeriesInStudy(serverConfig, studyInstanceUid);
@@ -1495,7 +2197,6 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     fileObj.index = sliceIndex;
     if (isStreaming) {
       try { onSlice(fileObj); } catch (e) {}
-      // Do NOT keep massive base64 buffers in allFiles when streaming; only retain metadata
       allFiles.push({ fileName: fileObj.fileName, size: fileObj.size, index: fileObj.index });
     } else {
       allFiles.push(fileObj);
@@ -1515,21 +2216,56 @@ async function retrieveDicomStudy(serverConfig, studyInstanceUid, onSlice) {
     };
   }
 
-  // 3. Fallback: Sequential Series-Level C-GET (for legacy PACS that reject Study-Level C-GET)
+  // 3. Fallback: Parallel Series-Level C-GET Pool (Concurrently dispatching across up to N connections)
   if (seriesList.length > 0) {
-    console.log(`[RadiAnt Pipeline] Falling back to Series-Level C-GET for ${seriesList.length} series...`);
-    for (const ser of seriesList) {
-      if (!ser.seriesUid) continue;
-      console.log(`[RadiAnt Pipeline] Fetching Series "${ser.seriesDescription || ser.seriesUid}"...`);
-      await retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, ser.seriesUid, handleWorkerSlice);
+    const maxConcurrency = Math.min(Math.max(1, Number(serverConfig.concurrentConnections) || 4), 8);
+    console.log(`[RadiAnt Pipeline] Executing Parallel Series-Level C-GET for ${seriesList.length} series across ${maxConcurrency} concurrent connections...`);
+
+    const validSeries = seriesList.filter(s => s && s.seriesUid);
+    let seriesIdx = 0;
+
+    async function runWorker(workerId) {
+      while (seriesIdx < validSeries.length) {
+        const ser = validSeries[seriesIdx++];
+        console.log(`[RadiAnt Parallel Worker #${workerId}] Fetching Series "${ser.seriesDescription || ser.seriesUid}" (${ser.instances || 0} instances)...`);
+        try {
+          await retrieveSingleSeriesWorker(serverConfig, studyInstanceUid, ser.seriesUid, handleWorkerSlice);
+        } catch (err) {
+          console.warn(`[RadiAnt Parallel Worker #${workerId}] Error fetching series ${ser.seriesUid}:`, err.message);
+        }
+      }
     }
 
-    console.log(`[RadiAnt Pipeline] Series-Level fallback complete. Total slices retrieved: ${allFiles.length}`);
-    return {
-      success: allFiles.length > 0,
-      count: allFiles.length,
-      files: isStreaming ? [] : allFiles
-    };
+    const workerPromises = [];
+    const poolSize = Math.min(maxConcurrency, validSeries.length);
+    for (let i = 1; i <= poolSize; i++) {
+      workerPromises.push(runWorker(i));
+    }
+    await Promise.all(workerPromises);
+
+    console.log(`[RadiAnt Pipeline] Parallel Series retrieval complete. Total slices retrieved: ${allFiles.length}`);
+    if (allFiles.length > 0) {
+      return {
+        success: true,
+        count: allFiles.length,
+        files: isStreaming ? [] : allFiles
+      };
+    }
+  }
+
+  // 4. Automatic Fallback to C-MOVE if C-GET yielded 0 slices
+  console.log(`[RadiAnt Pipeline] C-GET yielded 0 slices. Automatically executing C-MOVE fallback...`);
+  try {
+    const moveResult = await executeCMove(serverConfig, studyInstanceUid, '', handleWorkerSlice);
+    if (moveResult && allFiles.length > 0) {
+      return {
+        success: true,
+        count: allFiles.length,
+        files: isStreaming ? [] : allFiles
+      };
+    }
+  } catch (e) {
+    console.warn(`[RadiAnt Pipeline] C-MOVE fallback error:`, e.message);
   }
 
   return {
@@ -1545,17 +2281,25 @@ module.exports = {
   querySeriesInStudy,
   retrieveDicomStudy,
   retrieveSingleSeriesWorker,
+  executeCMove,
+  storeDicomInstances,
+  startCStoreServer,
+  getCStoreStatus,
+  registerCStoreSliceCallback,
   buildAssociateRq,
   buildAssociateAc,
   buildCEchoRq,
   buildCFindRq,
   buildCMoveRq,
   buildCGetRq,
+  streamCStoreInstance,
   buildCStoreRsp,
   buildReleaseRq,
   buildReleaseRp,
   makeDicomPart10Buffer,
+  extractRawDatasetFromPart10,
   parseDicomDataset,
+  createDicomSocket,
   SOP_VERIFICATION,
   SOP_STUDY_ROOT_FIND,
   SOP_PATIENT_ROOT_FIND,

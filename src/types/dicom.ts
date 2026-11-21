@@ -249,6 +249,8 @@ export interface PacsServerConfig {
   wadoUrl?: string;
   qidoUrl?: string;
   isDefault?: boolean;
+  useTls?: boolean;
+  concurrentConnections?: number;
 }
 
 export interface PacsSearchResult {

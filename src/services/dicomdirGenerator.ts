@@ -427,7 +427,7 @@ export class DicomDirGenerator {
   /**
    * Synthesizes a valid standard DICOM Part 10 file if rawBuffer is not retained
    */
-  private static synthesizeDicomFile(inst: DicomInstance, study: DicomStudy): Uint8Array {
+  public static synthesizeDicomFile(inst: DicomInstance, study: DicomStudy): Uint8Array {
     const writer = new BinaryWriter(65536 + (inst.rows * inst.columns * 2));
 
     // 128 bytes preamble + DICM

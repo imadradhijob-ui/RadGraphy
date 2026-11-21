@@ -125,6 +125,30 @@ export default defineConfig({
           }
         })
 
+        server.middlewares.use('/api/pacs/store', (req, res) => {
+          if (req.method === 'POST') {
+            let body = ''
+            req.on('data', chunk => { body += chunk })
+            req.on('end', async () => {
+              try {
+                const payload = JSON.parse(body)
+                const { serverConfig, instances } = payload
+                const { storeDicomInstances } = getDicomNetwork()
+                const result = await storeDicomInstances(serverConfig, instances)
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify(result))
+              } catch (err) {
+                res.statusCode = 500
+                res.setHeader('Content-Type', 'application/json')
+                res.end(JSON.stringify({ error: err.message, success: false }))
+              }
+            })
+          } else {
+            res.statusCode = 405
+            res.end('Method Not Allowed')
+          }
+        })
+
         // CD/DVD Optical Drive Auto-Detection & High-Speed Stream Endpoints
         server.middlewares.use('/api/system/detect-optical-drives', async (req, res) => {
           const fs = require('fs')

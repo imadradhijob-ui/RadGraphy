@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pacsEcho: (serverConfig) => ipcRenderer.invoke('pacs:echo', serverConfig),
   pacsSearch: (serverConfig, filters) => ipcRenderer.invoke('pacs:search', serverConfig, filters),
   pacsRetrieve: (serverConfig, studyInstanceUid) => ipcRenderer.invoke('pacs:retrieve', serverConfig, studyInstanceUid),
+  pacsStore: (serverConfig, instances) => ipcRenderer.invoke('pacs:store', serverConfig, instances),
+  pacsCStoreStatus: () => ipcRenderer.invoke('pacs:cstore-status'),
   minimizeWindow: () => ipcRenderer.invoke('window:minimize'),
   maximizeWindow: () => ipcRenderer.invoke('window:maximize'),
   closeWindow: () => ipcRenderer.invoke('window:close'),

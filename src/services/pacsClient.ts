@@ -723,4 +723,86 @@ export class PacsService {
       `Please check Called AE Title (${server?.aeTitle}), Calling AE Title (${server?.callingAeTitle}), and C-STORE listener port (${server?.cStorePort || 11112}) in PACS Server Settings, try C-GET protocol, or load local DICOM files.`
     );
   }
+
+  /**
+   * Pushes DICOM instances back to PACS server using C-STORE SCU
+   */
+  static async sendToPacs(
+    server: PacsServerConfig,
+    instances: Array<{ fileName: string; buffer: ArrayBuffer | Uint8Array | string }>
+  ): Promise<{ success: boolean; storedCount?: number; failedCount?: number; error?: string }> {
+    const cleanServer: PacsServerConfig = {
+      ...server,
+      port: Number(server.port) || 104,
+      cStorePort: Number(server.cStorePort) || 11112,
+      callingAeTitle: (server.callingAeTitle || 'RADNODE_VIEWER').trim(),
+      aeTitle: (server.aeTitle || 'INFOMED').trim(),
+      host: (server.host || '127.0.0.1').trim()
+    };
+
+    const serialized = instances.map(inst => {
+      let bufBase64 = '';
+      if (typeof inst.buffer === 'string') {
+        bufBase64 = inst.buffer;
+      } else if (inst.buffer instanceof ArrayBuffer) {
+        const bytes = new Uint8Array(inst.buffer);
+        let binary = '';
+        const chunk = 8192;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          const sub = bytes.subarray(i, i + chunk);
+          binary += String.fromCharCode.apply(null, sub as any);
+        }
+        bufBase64 = btoa(binary);
+      } else if (ArrayBuffer.isView(inst.buffer)) {
+        const view = inst.buffer as ArrayBufferView;
+        const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+        let binary = '';
+        const chunk = 8192;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          const sub = bytes.subarray(i, i + chunk);
+          binary += String.fromCharCode.apply(null, sub as any);
+        }
+        bufBase64 = btoa(binary);
+      }
+      return {
+        fileName: inst.fileName,
+        buffer: bufBase64
+      };
+    });
+
+    if (window.electronAPI?.pacsStore) {
+      try {
+        return await window.electronAPI.pacsStore(cleanServer, serialized);
+      } catch (e: any) {
+        return { success: false, error: e.message || 'C-STORE SCU IPC Error' };
+      }
+    }
+
+    // Dev server proxy fallback
+    try {
+      const res = await fetch('/api/pacs/store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serverConfig: cleanServer, instances: serialized })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      return { success: false, error: `HTTP ${res.status}: ${res.statusText}` };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Network error connecting to PACS' };
+    }
+  }
+
+  /**
+   * Gets C-STORE SCP listener daemon status
+   */
+  static async getCStoreDaemonStatus(): Promise<{ running: boolean; port: number }> {
+    if (window.electronAPI?.pacsCStoreStatus) {
+      try {
+        return await window.electronAPI.pacsCStoreStatus();
+      } catch (e) {}
+    }
+    return { running: true, port: 11112 };
+  }
 }
