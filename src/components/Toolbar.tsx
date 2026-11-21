@@ -33,7 +33,8 @@ import {
   Wand2,
   Bookmark,
   FileText,
-  Link2
+  Link2,
+  ListOrdered
 } from 'lucide-react';
 import { ColorLutType, GridLayout, ImageFilterType, MipMode, SyncMode, ToolType } from '../types/dicom';
 import { DEFAULT_WINDOW_PRESETS } from '../services/windowPresets';
@@ -66,6 +67,8 @@ interface ToolbarProps {
   currentWindowCenter?: number;
   currentWindowWidth?: number;
   onApplyWindowPreset: (wc: number, ww: number) => void;
+  measurementsCount?: number;
+  onOpenMeasurementsInspector?: () => void;
   onClearMeasurements: () => void;
   onOpenPacs: () => void;
   onOpenDicomDir: () => void;
@@ -105,6 +108,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   currentWindowCenter,
   currentWindowWidth,
   onApplyWindowPreset,
+  measurementsCount = 0,
+  onOpenMeasurementsInspector,
   onClearMeasurements,
   onOpenPacs,
   onOpenDicomDir,
@@ -434,6 +439,23 @@ export const Toolbar: React.FC<ToolbarProps> = ({
               </div>
             )}
           </div>
+
+          {/* Measurements & Annotations Inspector */}
+          {onOpenMeasurementsInspector && (
+            <button
+              onClick={onOpenMeasurementsInspector}
+              title="Open Measurements & Annotations Inspector"
+              className={`${actionBtnClass} relative`}
+            >
+              <ListOrdered className="w-3.5 h-3.5 text-cyan-400" />
+              <span>Inspector</span>
+              {measurementsCount > 0 && (
+                <span className="px-1 py-0.2 rounded-full bg-cyan-500 text-slate-950 font-mono font-bold text-[9px] -mr-0.5">
+                  {measurementsCount}
+                </span>
+              )}
+            </button>
+          )}
 
           {/* Clear Measurements */}
           <button

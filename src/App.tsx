@@ -17,6 +17,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { BottomStatusBar } from './components/BottomStatusBar';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { LogViewerModal } from './components/LogViewerModal';
+import { MeasurementsInspectorModal } from './components/MeasurementsInspectorModal';
 import { DicomErrorBoundary } from './components/DicomErrorBoundary';
 import { logger } from './services/logger';
 import JSZip from 'jszip';
@@ -73,6 +74,7 @@ export const App: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
   const [isShortcutsModalOpen, setIsShortcutsModalOpen] = useState<boolean>(false);
   const [isLogModalOpen, setIsLogModalOpen] = useState<boolean>(false);
+  const [isMeasurementsInspectorOpen, setIsMeasurementsInspectorOpen] = useState<boolean>(false);
   const [showOverlays, setShowOverlays] = useState<boolean>(true);
 
   // Streaming Background Loading State
@@ -602,6 +604,16 @@ export const App: React.FC = () => {
 
   const handleClearMeasurements = () => {
     updateActiveViewport({ measurements: [] });
+  };
+
+  const handleDeleteMeasurement = (id: string) => {
+    updateActiveViewport({
+      measurements: (currentViewport.measurements || []).filter(m => m.id !== id)
+    });
+  };
+
+  const handleJumpToSlice = (instanceIndex: number) => {
+    updateActiveViewport({ instanceIndex });
   };
 
   const handleAddMeasurement = (viewportId: string, measurement: Measurement) => {
@@ -1211,6 +1223,8 @@ export const App: React.FC = () => {
         currentWindowCenter={currentViewport.windowCenter}
         currentWindowWidth={currentViewport.windowWidth}
         onApplyWindowPreset={handleApplyWindowPreset}
+        measurementsCount={currentViewport.measurements?.length || 0}
+        onOpenMeasurementsInspector={() => setIsMeasurementsInspectorOpen(true)}
         onClearMeasurements={handleClearMeasurements}
         onOpenPacs={() => setIsPacsModalOpen(true)}
         onOpenDicomDir={() => setIsDicomDirModalOpen(true)}
@@ -1346,6 +1360,18 @@ export const App: React.FC = () => {
             });
           }
         }}
+      />
+
+      <MeasurementsInspectorModal
+        isOpen={isMeasurementsInspectorOpen}
+        onClose={() => setIsMeasurementsInspectorOpen(false)}
+        measurements={currentViewport.measurements || []}
+        patientName={activeStudy?.patientName}
+        patientId={activeStudy?.patientId}
+        studyDescription={activeStudy?.studyDescription}
+        onDeleteMeasurement={handleDeleteMeasurement}
+        onClearAll={handleClearMeasurements}
+        onJumpToSlice={handleJumpToSlice}
       />
 
       <ReportGeneratorModal

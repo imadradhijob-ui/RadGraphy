@@ -118,15 +118,168 @@ const SeriesThumbnailCanvas: React.FC<{ instance?: DicomInstance }> = ({ instanc
       ctx.imageSmoothingQuality = 'medium';
       ctx.drawImage(tempCanvas, dx, dy, dw, dh);
     } catch (err) {
-      // Fallback
+      // ignore preview decode failure
     }
   }, [instance]);
 
+  return <canvas ref={canvasRef} className="w-full h-full object-contain pointer-events-none" />;
+};
+
+const getModalityBadgeColor = (mod: string) => {
+  switch (mod) {
+    case 'CT':
+      return 'bg-amber-500/25 text-amber-300 border-amber-500/60';
+    case 'MR':
+      return 'bg-cyan-500/25 text-cyan-300 border-cyan-500/60';
+    case 'DX':
+    case 'CR':
+      return 'bg-emerald-500/25 text-emerald-300 border-emerald-500/60';
+    case 'US':
+      return 'bg-purple-500/25 text-purple-300 border-purple-500/60';
+    case 'XA':
+    case 'RF':
+      return 'bg-rose-500/25 text-rose-300 border-rose-500/60';
+    default:
+      return 'bg-blue-500/25 text-blue-300 border-blue-500/60';
+  }
+};
+
+// Interactive Series Card with Hover Scrubbing
+interface SeriesCardProps {
+  ser: DicomSeries;
+  isSelected: boolean;
+  onSelectSeries: (series: DicomSeries) => void;
+  onDragSeriesStart?: (e: React.DragEvent, series: DicomSeries) => void;
+}
+
+const SeriesCard: React.FC<SeriesCardProps> = ({
+  ser,
+  isSelected,
+  onSelectSeries,
+  onDragSeriesStart
+}) => {
+  const [scrubIndex, setScrubIndex] = useState<number | null>(null);
+  const repInstance = ser.instances[Math.floor(ser.instances.length / 2)] || ser.instances[0];
+  const activeInstance = scrubIndex !== null && ser.instances[scrubIndex] ? ser.instances[scrubIndex] : repInstance;
+  const plane = detectAnatomicalPlane(ser.seriesDescription, repInstance?.imageOrientationPatient);
+
+  const handleThumbnailMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!ser.instances || ser.instances.length <= 1) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const idx = Math.min(ser.instances.length - 1, Math.floor(ratio * ser.instances.length));
+    setScrubIndex(idx);
+  };
+
+  const handleThumbnailMouseLeave = () => {
+    setScrubIndex(null);
+  };
+
   return (
-    <canvas
-      ref={canvasRef}
-      className="w-full h-full object-contain rounded bg-black transition-transform duration-200 group-hover:scale-105"
-    />
+    <div
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.effectAllowed = 'copy';
+        const data = JSON.stringify({
+          studyUid: ser.studyInstanceUid,
+          seriesUid: ser.seriesInstanceUid
+        });
+        e.dataTransfer.setData('application/json', data);
+        e.dataTransfer.setData('text/plain', data);
+        if (onDragSeriesStart) onDragSeriesStart(e, ser);
+      }}
+      onClick={() => onSelectSeries(ser)}
+      title={`Click to view on active screen, or drag & drop onto any viewport\n${ser.seriesDescription || `Series ${ser.seriesNumber}`} (${ser.numberOfInstances} images)\nHover over thumbnail to scrub slices`}
+      className={`p-1.5 rounded-lg border transition-all cursor-pointer group select-none shadow-sm hover:ring-1 hover:ring-cyan-400/50 ${
+        isSelected
+          ? 'bg-gradient-to-r from-cyan-950/70 to-radiant-panel border-cyan-500 ring-1 ring-cyan-500/80 shadow-[0_0_10px_rgba(0,180,216,0.2)]'
+          : 'bg-radiant-panel/80 border-radiant-border hover:bg-radiant-card hover:border-slate-500'
+      }`}
+    >
+      <div className="flex items-start gap-2">
+        {/* Real Rendered DICOM Preview Thumbnail with Fast Hover Scrubbing */}
+        <div
+          onMouseMove={handleThumbnailMouseMove}
+          onMouseLeave={handleThumbnailMouseLeave}
+          className="w-16 h-16 bg-black rounded border border-slate-700/80 relative overflow-hidden flex-shrink-0 shadow-inner group-hover:border-cyan-500/70 transition-colors cursor-ew-resize"
+        >
+          <SeriesThumbnailCanvas instance={activeInstance} />
+
+          {/* Top Modality Badge */}
+          <div className="absolute top-0.5 left-0.5 pointer-events-none">
+            <span className={`px-1 py-0 rounded text-[8.5px] font-bold border backdrop-blur-sm shadow ${getModalityBadgeColor(ser.modality)}`}>
+              {ser.modality}
+            </span>
+          </div>
+
+          {/* Scrubbing Visual Badge / Normal Slice Count Badge */}
+          {scrubIndex !== null ? (
+            <>
+              {/* Scrub Progress Bar */}
+              <div className="absolute bottom-0 left-0 right-0 h-1 bg-slate-900 pointer-events-none">
+                <div
+                  className="h-full bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.8)]"
+                  style={{ width: `${((scrubIndex + 1) / ser.instances.length) * 100}%` }}
+                />
+              </div>
+              <div className="absolute top-0.5 right-0.5 pointer-events-none bg-amber-400 text-slate-950 px-1 py-0.2 rounded text-[8px] font-mono font-bold shadow">
+                {scrubIndex + 1}
+              </div>
+            </>
+          ) : (
+            <div className="absolute bottom-0.5 right-0.5 pointer-events-none bg-black/90 px-1 py-0.2 rounded text-[9px] font-mono font-bold text-cyan-300 border border-slate-800 shadow">
+              {ser.numberOfInstances}
+            </div>
+          )}
+        </div>
+
+        {/* Series Metadata & Parameters */}
+        <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2">
+          <div>
+            <div className="flex items-center gap-1 mb-0.5">
+              <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-800/80 px-1 rounded">
+                #{ser.seriesNumber}
+              </span>
+              {plane && (
+                <span
+                  className={`text-[8.5px] font-mono font-bold px-1 rounded border ${
+                    plane === 'CORONAL'
+                      ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/50'
+                      : plane === 'SAGITTAL'
+                      ? 'bg-amber-950/80 text-amber-300 border-amber-600/50'
+                      : 'bg-indigo-950/80 text-indigo-300 border-indigo-600/50'
+                  }`}
+                >
+                  {plane === 'CORONAL' ? 'COR' : plane === 'SAGITTAL' ? 'SAG' : 'AX'}
+                </span>
+              )}
+            </div>
+
+            {/* Series Description */}
+            <h4
+              className={`font-semibold text-[11px] leading-snug transition-colors line-clamp-2 ${
+                isSelected ? 'text-cyan-300' : 'text-slate-200 group-hover:text-cyan-300'
+              }`}
+            >
+              {ser.seriesDescription || `Series ${ser.seriesNumber}`}
+            </h4>
+          </div>
+
+          <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/80 mt-1">
+            <span className="text-cyan-300 font-mono font-medium">
+              {scrubIndex !== null ? (
+                <span className="text-amber-300 font-bold">Slice {scrubIndex + 1}/{ser.numberOfInstances}</span>
+              ) : (
+                `${ser.numberOfInstances} imgs`
+              )}
+            </span>
+            <span className="text-slate-400 font-mono text-[9px]">
+              {activeInstance?.sliceThickness ? `${activeInstance.sliceThickness.toFixed(1)}mm` : ''}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 };
 
@@ -142,25 +295,6 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
   pacsDownloadState
 }) => {
   const [isExtraWide, setIsExtraWide] = useState(false);
-
-  const getModalityBadgeColor = (mod: string) => {
-    switch (mod) {
-      case 'CT':
-        return 'bg-amber-500/25 text-amber-300 border-amber-500/60';
-      case 'MR':
-        return 'bg-cyan-500/25 text-cyan-300 border-cyan-500/60';
-      case 'DX':
-      case 'CR':
-        return 'bg-emerald-500/25 text-emerald-300 border-emerald-500/60';
-      case 'US':
-        return 'bg-purple-500/25 text-purple-300 border-purple-500/60';
-      case 'XA':
-      case 'RF':
-        return 'bg-rose-500/25 text-rose-300 border-rose-500/60';
-      default:
-        return 'bg-blue-500/25 text-blue-300 border-blue-500/60';
-    }
-  };
 
   const getSourceIcon = (source: string) => {
     switch (source) {
@@ -278,92 +412,15 @@ export const SeriesSidebar: React.FC<SeriesSidebarProps> = ({
       {/* Series Thumbnail Gallery List */}
       <div className="flex-1 overflow-y-auto p-1.5 space-y-2">
         {activeStudy && activeStudy.series.length > 0 ? (
-          activeStudy.series.map((ser) => {
-            const isSelected = activeSeries?.seriesInstanceUid === ser.seriesInstanceUid;
-            const repInstance = ser.instances[Math.floor(ser.instances.length / 2)] || ser.instances[0];
-            const plane = detectAnatomicalPlane(ser.seriesDescription, repInstance?.imageOrientationPatient);
-
-            return (
-              <div
-                key={ser.seriesInstanceUid}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.effectAllowed = 'copy';
-                  const data = JSON.stringify({
-                    studyUid: ser.studyInstanceUid,
-                    seriesUid: ser.seriesInstanceUid
-                  });
-                  e.dataTransfer.setData('application/json', data);
-                  e.dataTransfer.setData('text/plain', data);
-                  if (onDragSeriesStart) onDragSeriesStart(e, ser);
-                }}
-                onClick={() => onSelectSeries(ser)}
-                title={`Click to view on active screen, or drag & drop onto any viewport\n${ser.seriesDescription || `Series ${ser.seriesNumber}`} (${ser.numberOfInstances} images)`}
-                className={`p-1.5 rounded-lg border transition-all cursor-pointer group select-none shadow-sm hover:ring-1 hover:ring-cyan-400/50 ${
-                  isSelected
-                    ? 'bg-gradient-to-r from-cyan-950/70 to-radiant-panel border-cyan-500 ring-1 ring-cyan-500/80 shadow-[0_0_10px_rgba(0,180,216,0.2)]'
-                    : 'bg-radiant-panel/80 border-radiant-border hover:bg-radiant-card hover:border-slate-500'
-                }`}
-              >
-                <div className="flex items-start gap-2">
-                  {/* Real Rendered DICOM Preview Thumbnail */}
-                  <div className="w-16 h-16 bg-black rounded border border-slate-700/80 relative overflow-hidden flex-shrink-0 shadow-inner group-hover:border-cyan-500/70 transition-colors">
-                    <SeriesThumbnailCanvas instance={repInstance} />
-
-                    {/* Top Modality Badge */}
-                    <div className="absolute top-0.5 left-0.5 pointer-events-none">
-                      <span className={`px-1 py-0 rounded text-[8.5px] font-bold border backdrop-blur-sm shadow ${getModalityBadgeColor(ser.modality)}`}>
-                        {ser.modality}
-                      </span>
-                    </div>
-
-                    {/* RadiAnt-style Bold Slice Count Badge (Bottom-Right) */}
-                    <div className="absolute bottom-0.5 right-0.5 pointer-events-none bg-black/90 px-1 py-0.2 rounded text-[9px] font-mono font-bold text-cyan-300 border border-slate-800 shadow">
-                      {ser.numberOfInstances}
-                    </div>
-                  </div>
-
-                  {/* Series Metadata & Parameters */}
-                  <div className="flex-1 min-w-0 flex flex-col justify-between self-stretch py-0.2">
-                    <div>
-                      <div className="flex items-center gap-1 mb-0.5">
-                        <span className="text-[9px] font-mono font-bold text-slate-400 bg-slate-800/80 px-1 rounded">
-                          #{ser.seriesNumber}
-                        </span>
-                        {plane && (
-                          <span className={`text-[8.5px] font-mono font-bold px-1 rounded border ${
-                            plane === 'CORONAL'
-                              ? 'bg-emerald-950/80 text-emerald-300 border-emerald-600/50'
-                              : plane === 'SAGITTAL'
-                              ? 'bg-amber-950/80 text-amber-300 border-amber-600/50'
-                              : 'bg-indigo-950/80 text-indigo-300 border-indigo-600/50'
-                          }`}>
-                            {plane === 'CORONAL' ? 'COR' : plane === 'SAGITTAL' ? 'SAG' : 'AX'}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Series Description - full readability without premature cutoff */}
-                      <h4
-                        className={`font-semibold text-[11px] leading-snug transition-colors line-clamp-2 ${
-                          isSelected ? 'text-cyan-300' : 'text-slate-200 group-hover:text-cyan-300'
-                        }`}
-                      >
-                        {ser.seriesDescription || `Series ${ser.seriesNumber}`}
-                      </h4>
-                    </div>
-
-                    <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/80 mt-1">
-                      <span className="text-cyan-300 font-mono font-medium">{ser.numberOfInstances} imgs</span>
-                      <span className="text-slate-400 font-mono text-[9px]">
-                        {repInstance?.sliceThickness ? `${repInstance.sliceThickness.toFixed(1)}mm` : ''}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })
+          activeStudy.series.map((ser) => (
+            <SeriesCard
+              key={ser.seriesInstanceUid}
+              ser={ser}
+              isSelected={activeSeries?.seriesInstanceUid === ser.seriesInstanceUid}
+              onSelectSeries={onSelectSeries}
+              onDragSeriesStart={onDragSeriesStart}
+            />
+          ))
         ) : (
           <div className="h-full flex flex-col items-center justify-center text-center p-4 text-slate-500">
             <Layers className="w-8 h-8 text-slate-600 mb-2 animate-pulse" />

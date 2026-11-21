@@ -14,6 +14,11 @@ import { getLutTable, classifyTissueFromHu } from '../services/lutService';
 import { applyImageFilter } from '../services/imageFilters';
 import { calculateCrossReferenceLine } from '../services/crossReferenceService';
 import { logger } from '../services/logger';
+import { DynamicScaleRuler } from './DynamicScaleRuler';
+import { OrientationCube } from './OrientationCube';
+import { FloatingWindowPresets } from './FloatingWindowPresets';
+import { getAnatomicalDirections } from '../services/orientationService';
+import { detectAnatomicalPlane } from '../services/mprEngine';
 
 interface DicomViewportProps {
   viewportState: ViewportState;
@@ -73,6 +78,17 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
   const instanceIndex = viewportState.instanceIndex || 0;
   const currentInstance: DicomInstance | undefined = series?.instances[instanceIndex] || series?.instances[0];
   const totalInstances = series?.instances?.length || 0;
+
+  const plane = detectAnatomicalPlane(series?.seriesDescription, currentInstance?.imageOrientationPatient);
+  const anatomicalDirs = currentInstance
+    ? getAnatomicalDirections(
+        currentInstance.imageOrientationPatient,
+        viewportState.rotation || 0,
+        viewportState.flipH || false,
+        viewportState.flipV || false,
+        plane
+      )
+    : null;
 
   // Series Vertical Scrollbar State
   const scrollbarTrackRef = useRef<HTMLDivElement>(null);
@@ -1198,11 +1214,23 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
       {/* 2. Overlay Canvas for Measurements */}
       <canvas ref={overlayCanvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
 
-      {/* 3. RadiAnt HUD Corner Text Overlays */}
+      {/* 2.5 Quick Floating Window Presets Bar */}
+      {currentInstance && (
+        <FloatingWindowPresets
+          currentWc={viewportState.windowCenter}
+          currentWw={viewportState.windowWidth}
+          defaultWc={currentInstance.windowCenter || 40}
+          defaultWw={currentInstance.windowWidth || 400}
+          onApplyPreset={(wc, ww) => onUpdateState({ windowCenter: wc, windowWidth: ww })}
+          onInvert={() => onUpdateState({ invert: !viewportState.invert })}
+        />
+      )}
+
+      {/* 3. RadiAnt HUD Corner Text Overlays & Diagnostics (Glassmorphic) */}
       {currentInstance && (viewportState.showOverlays ?? true) && (
         <>
           {/* Top-Left: Patient Metadata */}
-          <div className="absolute top-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10">
+          <div className="absolute top-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10 p-2 rounded-lg bg-slate-950/65 backdrop-blur-md border border-slate-700/50 shadow-xl">
             <div className="font-bold text-amber-300 text-xs">
               {(study?.patientName || 'Anonymous').replace(/\^/g, ' ')}
             </div>
@@ -1216,7 +1244,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
           </div>
 
           {/* Top-Right: Hospital & Acquisition */}
-          <div className="absolute top-2.5 right-3 text-right radiant-overlay-text text-slate-100 z-10">
+          <div className="absolute top-2.5 right-3 text-right radiant-overlay-text text-slate-100 z-10 p-2 rounded-lg bg-slate-950/65 backdrop-blur-md border border-slate-700/50 shadow-xl">
             <div className="font-bold text-cyan-400">
               {series?.modality || 'OT'} | {series?.seriesDescription || `Series ${series?.seriesNumber || 1}`}
             </div>
@@ -1226,8 +1254,54 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             </div>
           </div>
 
+          {/* 3D Anatomical Orientation Cube (Top-Right under metadata) */}
+          <div className="absolute top-24 right-3 z-20">
+            <OrientationCube
+              plane={plane}
+              rotation={viewportState.rotation || 0}
+              flipH={viewportState.flipH || false}
+              flipV={viewportState.flipV || false}
+              onResetOrientation={() =>
+                onUpdateState({ rotation: 0, flipH: false, flipV: false })
+              }
+            />
+          </div>
+
+          {/* Anatomical 4-Edge Direction Indicators */}
+          {anatomicalDirs && (
+            <>
+              {/* Left Edge */}
+              <div className="absolute left-2.5 top-1/2 -translate-y-1/2 z-20 pointer-events-none px-1.5 py-0.5 rounded bg-slate-950/70 border border-amber-400/50 text-amber-300 font-mono font-bold text-xs shadow-md backdrop-blur-sm">
+                {anatomicalDirs.left}
+              </div>
+
+              {/* Right Edge (left of vertical scrollbar) */}
+              <div className="absolute right-8 top-1/2 -translate-y-1/2 z-20 pointer-events-none px-1.5 py-0.5 rounded bg-slate-950/70 border border-amber-400/50 text-amber-300 font-mono font-bold text-xs shadow-md backdrop-blur-sm">
+                {anatomicalDirs.right}
+              </div>
+
+              {/* Top Edge */}
+              <div className="absolute top-11 left-1/2 -translate-x-1/2 z-20 pointer-events-none px-1.5 py-0.5 rounded bg-slate-950/70 border border-amber-400/50 text-amber-300 font-mono font-bold text-xs shadow-md backdrop-blur-sm">
+                {anatomicalDirs.top}
+              </div>
+
+              {/* Bottom Edge */}
+              <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none px-1.5 py-0.5 rounded bg-slate-950/70 border border-amber-400/50 text-amber-300 font-mono font-bold text-xs shadow-md backdrop-blur-sm">
+                {anatomicalDirs.bottom}
+              </div>
+            </>
+          )}
+
+          {/* Dynamic Calibration Scale Ruler (Bottom-Left above metadata) */}
+          <div className="absolute bottom-28 left-3 z-20 pointer-events-none">
+            <DynamicScaleRuler
+              zoom={viewportState.zoom || 1}
+              pixelSpacing={currentInstance.pixelSpacing}
+            />
+          </div>
+
           {/* Bottom-Left: Slice Position & Zoom */}
-          <div className="absolute bottom-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10 pointer-events-none">
+          <div className="absolute bottom-2.5 left-3 text-left radiant-overlay-text text-slate-100 z-10 p-2 rounded-lg bg-slate-950/65 backdrop-blur-md border border-slate-700/50 shadow-xl pointer-events-none">
             {/* Prominent High-Visibility Slide / Slice Number Badge & Sync Status */}
             <div className="flex items-center gap-1.5 mb-1 pointer-events-auto">
               <span className="px-2 py-0.5 rounded bg-black/85 border border-amber-400 text-amber-300 font-mono font-bold text-xs shadow-lg backdrop-blur-sm">
@@ -1252,7 +1326,7 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
           </div>
 
           {/* Bottom-Right: Window Center / Width & Live HU Probe */}
-          <div className="absolute bottom-2.5 right-3 text-right radiant-overlay-text text-slate-100 z-10">
+          <div className="absolute bottom-2.5 right-8 text-right radiant-overlay-text text-slate-100 z-10 p-2 rounded-lg bg-slate-950/65 backdrop-blur-md border border-slate-700/50 shadow-xl">
             <div className="radiant-overlay-green font-mono font-bold">
               WL: {viewportState.windowCenter} WW: {viewportState.windowWidth}
             </div>
