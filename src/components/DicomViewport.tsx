@@ -1254,8 +1254,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             </div>
           </div>
 
-          {/* 3D Anatomical Orientation Cube (Top-Right under metadata) */}
-          <div className="absolute top-24 right-3 z-20">
+          {/* 3D Anatomical Orientation Cube (Positioned clear of vertical scrollbar) */}
+          <div className="absolute top-28 right-10 z-20">
             <OrientationCube
               plane={plane}
               rotation={viewportState.rotation || 0}
@@ -1275,8 +1275,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
                 {anatomicalDirs.left}
               </div>
 
-              {/* Right Edge (left of vertical scrollbar) */}
-              <div className="absolute right-8 top-1/2 -translate-y-1/2 z-20 pointer-events-none px-1.5 py-0.5 rounded bg-slate-950/70 border border-amber-400/50 text-amber-300 font-mono font-bold text-xs shadow-md backdrop-blur-sm">
+              {/* Right Edge (clear of vertical scrollbar) */}
+              <div className="absolute right-10 top-1/2 -translate-y-1/2 z-20 pointer-events-none px-1.5 py-0.5 rounded bg-slate-950/70 border border-amber-400/50 text-amber-300 font-mono font-bold text-xs shadow-md backdrop-blur-sm">
                 {anatomicalDirs.right}
               </div>
 
@@ -1325,8 +1325,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             </div>
           </div>
 
-          {/* Bottom-Right: Window Center / Width & Live HU Probe */}
-          <div className="absolute bottom-2.5 right-8 text-right radiant-overlay-text text-slate-100 z-10 p-2 rounded-lg bg-slate-950/65 backdrop-blur-md border border-slate-700/50 shadow-xl">
+          {/* Bottom-Right: Window Center / Width & Live HU Probe (Clear of vertical scrollbar) */}
+          <div className="absolute bottom-2.5 right-10 text-right radiant-overlay-text text-slate-100 z-10 p-2 rounded-lg bg-slate-950/65 backdrop-blur-md border border-slate-700/50 shadow-xl">
             <div className="radiant-overlay-green font-mono font-bold">
               WL: {viewportState.windowCenter} WW: {viewportState.windowWidth}
             </div>
