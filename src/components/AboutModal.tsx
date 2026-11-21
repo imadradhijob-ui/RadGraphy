@@ -84,7 +84,7 @@ export const AboutModal: React.FC<AboutModalProps> = ({
         <div className="bg-gradient-to-r from-emerald-950/90 via-slate-900 to-cyan-950/90 border-b border-emerald-500/30 px-5 py-2 flex items-center justify-between text-[11px] text-emerald-300 font-bold tracking-wide shadow-inner">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL</span>
+            <span>POWERED BY AL-SHAAB HOSPITAL IT TEAM</span>
           </div>
           <span className="text-[9.5px] font-mono px-2 py-0.5 rounded bg-emerald-900/60 border border-emerald-500/50 text-emerald-200">
             Al-Shaab Hospital

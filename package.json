@@ -2,7 +2,7 @@
   "name": "radnode-viewer",
   "private": true,
   "version": "0.0.12",
-  "description": "RadNode Viewer Version 0.0.12 - POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL",
+  "description": "RadNode Viewer Version 0.0.12 - POWERED BY AL-SHAAB HOSPITAL IT TEAM",
   "author": "IMAD RADHI <imad.radhi@gmail.com>",
   "type": "module",
   "main": "electron/main.cjs",

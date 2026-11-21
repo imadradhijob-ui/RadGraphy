@@ -121,7 +121,7 @@ export const BottomStatusBar: React.FC<BottomStatusBarProps> = ({
       {/* Hospital IT Department Powered Badge */}
       <div className="hidden lg:flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-950/40 border border-emerald-500/30 text-[9.5px] font-semibold text-emerald-300 tracking-wider select-none">
         <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
-        <span>POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL</span>
+        <span>POWERED BY AL-SHAAB HOSPITAL IT TEAM</span>
       </div>
 
       {/* Right Segment: Codec / Syntax, Overlays Toggle, Shortcuts */}

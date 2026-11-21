@@ -168,7 +168,7 @@ export const ReportGeneratorModal: React.FC<ReportGeneratorModalProps> = ({
             <div style="font-size: 10.5px; text-align: right; color: #64748b; margin-top: 3px;">
               <div>Report Date: ${new Date().toLocaleDateString()}</div>
               <div>RadNode Viewer PACS</div>
-              <div style="font-size: 9px; color: #059669; font-weight: bold; margin-top: 2px;">POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL</div>
+              <div style="font-size: 9px; color: #059669; font-weight: bold; margin-top: 2px;">POWERED BY AL-SHAAB HOSPITAL IT TEAM</div>
             </div>
           </div>
         </div>

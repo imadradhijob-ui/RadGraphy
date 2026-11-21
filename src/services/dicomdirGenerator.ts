@@ -394,7 +394,7 @@ export class DicomDirGenerator {
     zip.file(
       'README.TXT',
       `RADNODE VIEWER DICOMDIR ARCHIVE\r\n` +
-      `POWERED BY THE IT DEPARTMENT AL-SHAAB HOSPITAL\r\n` +
+      `POWERED BY AL-SHAAB HOSPITAL IT TEAM\r\n` +
       `===================================\r\n` +
       `Patient Name: ${study.patientName}\r\n` +
       `Patient ID:   ${study.patientId}\r\n` +
