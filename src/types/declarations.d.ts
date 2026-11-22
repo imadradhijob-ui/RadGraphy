@@ -64,6 +64,9 @@ interface Window {
     pacsRetrieve: (serverConfig: any, studyInstanceUid: string) => Promise<{ success: boolean; count: number; files: Array<{ fileName: string; buffer: string; size: number }> }>;
     pacsStore?: (serverConfig: any, instances: Array<{ fileName: string; buffer: string | ArrayBuffer }>) => Promise<{ success: boolean; storedCount?: number; failedCount?: number; error?: string }>;
     pacsCStoreStatus?: () => Promise<{ running: boolean; port: number }>;
+    selectDirectory?: (defaultPath?: string) => Promise<string | null>;
+    saveExportBatch?: (options: { baseDir: string; subDir?: string; files: Array<{ filename: string; base64: string }> }) => Promise<{ success: boolean; count?: number; targetDir?: string; error?: string }>;
+    openFolder?: (folderPath: string) => Promise<boolean>;
     onPacsSlice?: (callback: (slice: { fileName: string; buffer: string; size: number; index: number }) => void) => () => void;
     logError?: (entry: { level?: string; message: string; stack?: string; context?: any }) => Promise<void>;
     openLogFile?: () => Promise<{ success: boolean; error?: string; path?: string }>;

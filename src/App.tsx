@@ -1336,7 +1336,9 @@ export const App: React.FC = () => {
         isOpen={isExportModalOpen}
         onClose={() => setIsExportModalOpen(false)}
         study={activeStudy}
+        currentSeries={activeSeries}
         currentInstance={activeInstance}
+        currentViewport={currentViewport}
         measurements={currentViewport.measurements}
       />
 

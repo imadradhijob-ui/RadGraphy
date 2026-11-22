@@ -344,6 +344,52 @@ ipcMain.handle('fs:readFile', async (event, filePath) => {
   }
 });
 
+ipcMain.handle('dialog:selectDirectory', async (event, defaultPath) => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select Destination Folder or USB Flash Drive to Save Images',
+      defaultPath: defaultPath || undefined,
+      properties: ['openDirectory', 'createDirectory', 'promptToCreate']
+    });
+    if (result.canceled || !result.filePaths.length) return null;
+    return result.filePaths[0];
+  } catch (err) {
+    writeToLog('IPC_ERROR', 'dialog:selectDirectory failed', err);
+    return null;
+  }
+});
+
+ipcMain.handle('fs:saveExportBatch', async (event, { baseDir, subDir, files }) => {
+  try {
+    if (!baseDir) return { success: false, error: 'No destination directory specified' };
+    const targetDir = subDir ? path.join(baseDir, subDir) : baseDir;
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    for (const f of files) {
+      const filePath = path.join(targetDir, f.filename);
+      const buf = Buffer.from(f.base64, 'base64');
+      fs.writeFileSync(filePath, buf);
+    }
+    return { success: true, count: files.length, targetDir };
+  } catch (err) {
+    writeToLog('EXPORT_ERROR', 'fs:saveExportBatch failed', err);
+    return { success: false, error: err?.message || 'Failed writing files' };
+  }
+});
+
+ipcMain.handle('system:openFolder', async (event, folderPath) => {
+  try {
+    if (folderPath && fs.existsSync(folderPath)) {
+      shell.openPath(folderPath);
+      return true;
+    }
+    return false;
+  } catch (_) {
+    return false;
+  }
+});
+
 let isOpticalScanCancelled = false;
 
 function findReadyOpticalDrive() {
