@@ -7,7 +7,7 @@ function getDicomNetwork() {
   try {
     const resolved = require.resolve('./electron/dicomNetwork.cjs')
     delete require.cache[resolved]
-  } catch {}
+  } catch { }
   return require('./electron/dicomNetwork.cjs')
 }
 
@@ -138,10 +138,10 @@ export default defineConfig({
                 const result = await storeDicomInstances(serverConfig, instances)
                 res.setHeader('Content-Type', 'application/json')
                 res.end(JSON.stringify(result))
-              } catch (err) {
+              } catch (err: any) {
                 res.statusCode = 500
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: err.message, success: false }))
+                res.end(JSON.stringify({ error: err?.message || 'Failed to process store request', success: false }))
               }
             })
           } else {
@@ -179,7 +179,7 @@ export default defineConfig({
                     }
                   }
                 }
-              } catch (_) {}
+              } catch (_) { }
 
               for (let i = 68; i <= 90; i++) {
                 const letter = String.fromCharCode(i) + ':'
@@ -196,7 +196,7 @@ export default defineConfig({
                       })
                     }
                   }
-                } catch (_) {}
+                } catch (_) { }
               }
               resolve(null)
             })
@@ -245,7 +245,7 @@ export default defineConfig({
                     }
                   }
                 }
-              } catch (_) {}
+              } catch (_) { }
 
               for (let i = 68; i <= 90; i++) {
                 const letter = String.fromCharCode(i) + ':'
@@ -263,7 +263,7 @@ export default defineConfig({
                       })
                     }
                   }
-                } catch (_) {}
+                } catch (_) { }
               }
               resolve(null)
             })
@@ -304,10 +304,10 @@ export default defineConfig({
                         size: stats.size
                       })
                     }
-                  } catch (e) {}
+                  } catch (e) { }
                 }
               }
-            } catch (err) {}
+            } catch (err) { }
           }
 
           let sliceCount = 0

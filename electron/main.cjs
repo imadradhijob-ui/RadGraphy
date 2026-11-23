@@ -118,7 +118,7 @@ function createWindow() {
     minHeight: 700,
     center: true,
     backgroundColor: '#0B0F17',
-    title: 'RadNode Viewer Version 0.0.11',
+    title: 'RadNode Viewer v0.0.13',
     icon: windowIconPath,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
