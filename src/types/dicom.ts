@@ -9,6 +9,7 @@ export interface DicomTag {
 
 export interface DicomInstance {
   sopInstanceUid: string;
+  sopClassUid?: string;
   instanceNumber: number;
   rows: number;
   columns: number;

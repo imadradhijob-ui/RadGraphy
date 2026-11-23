@@ -72,6 +72,27 @@ const DEFAULT_PACS_SERVERS: PacsServerConfig[] = [
   }
 ];
 
+function safeBufferToBase64(buffer: ArrayBuffer | Uint8Array | ArrayBufferView): string {
+  const bytes = buffer instanceof Uint8Array
+    ? buffer
+    : ArrayBuffer.isView(buffer)
+    ? new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
+    : new Uint8Array(buffer);
+
+  const len = bytes.length;
+  if (len < 32768) {
+    return btoa(String.fromCharCode.apply(null, bytes as any));
+  }
+
+  const CHUNK_SIZE = 32768;
+  const parts: string[] = [];
+  for (let i = 0; i < len; i += CHUNK_SIZE) {
+    const sub = bytes.subarray(i, Math.min(i + CHUNK_SIZE, len));
+    parts.push(String.fromCharCode.apply(null, sub as any));
+  }
+  return btoa(parts.join(''));
+}
+
 export class PacsService {
   private static STORAGE_KEY = 'radiner_pacs_servers_v1';
   private static LEGACY_STORAGE_KEYS = ['radiant_pacs_servers_v6', 'radiant_pacs_servers_v5'];
@@ -744,25 +765,8 @@ export class PacsService {
       let bufBase64 = '';
       if (typeof inst.buffer === 'string') {
         bufBase64 = inst.buffer;
-      } else if (inst.buffer instanceof ArrayBuffer) {
-        const bytes = new Uint8Array(inst.buffer);
-        let binary = '';
-        const chunk = 8192;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          const sub = bytes.subarray(i, i + chunk);
-          binary += String.fromCharCode.apply(null, sub as any);
-        }
-        bufBase64 = btoa(binary);
-      } else if (ArrayBuffer.isView(inst.buffer)) {
-        const view = inst.buffer as ArrayBufferView;
-        const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
-        let binary = '';
-        const chunk = 8192;
-        for (let i = 0; i < bytes.length; i += chunk) {
-          const sub = bytes.subarray(i, i + chunk);
-          binary += String.fromCharCode.apply(null, sub as any);
-        }
-        bufBase64 = btoa(binary);
+      } else if (inst.buffer instanceof ArrayBuffer || ArrayBuffer.isView(inst.buffer)) {
+        bufBase64 = safeBufferToBase64(inst.buffer);
       }
       return {
         fileName: inst.fileName,

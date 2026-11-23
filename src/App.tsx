@@ -37,7 +37,7 @@ import {
   PacsDownloadState,
   PacsSearchResult
 } from './types/dicom';
-import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './services/dicomParser';
+import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer, isZipBuffer } from './services/dicomParser';
 import { detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice, isEligibleForMpr } from './services/mprEngine';
 import { PacsService } from './services/pacsClient';
 import { Loader2 } from 'lucide-react';
@@ -623,7 +623,7 @@ export const App: React.FC = () => {
   };
 
   // File & Folder Parsing
-  const processRawFiles = async (files: FileList | File[], sourceDesc: string) => {
+  const processRawFiles = async (files: FileList | File[], sourceDesc: string, targetViewportId?: string) => {
     const fileArray = Array.from(files);
     if (fileArray.length === 0) return;
 
@@ -646,7 +646,7 @@ export const App: React.FC = () => {
             const isZip = file.name.toLowerCase().endsWith('.zip') || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
             const buffer = await file.arrayBuffer();
 
-            if (isZip) {
+            if (isZip || isZipBuffer(buffer)) {
               setLoadingStatus({
                 loaded: i,
                 total: fileArray.length,
@@ -706,7 +706,11 @@ export const App: React.FC = () => {
 
       const newStudies = groupInstancesIntoStudies(parsedInstances, 'file', sourceDesc);
       setStudies(prev => [...newStudies, ...prev]);
-      handleSelectStudy(newStudies[0]);
+      if (targetViewportId && newStudies[0]?.series[0]) {
+        handleDropSeriesOnViewport(targetViewportId, newStudies[0].series[0], newStudies[0]);
+      } else {
+        handleSelectStudy(newStudies[0]);
+      }
       showNotification(`Loaded ${parsedInstances.length} DICOM files successfully.`);
     } catch (err: any) {
       setLoadingStatus(null);
@@ -716,7 +720,7 @@ export const App: React.FC = () => {
   };
 
   // Process raw ArrayBuffers from Native Electron dialogs safely
-  const processRawBuffers = async (rawFiles: Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>, sourceDesc: string) => {
+  const processRawBuffers = async (rawFiles: Array<{ fileName: string; filePath: string; buffer: ArrayBuffer }>, sourceDesc: string, targetViewportId?: string) => {
     if (!rawFiles || rawFiles.length === 0) return;
     try {
       setLoadingStatus({
@@ -733,7 +737,25 @@ export const App: React.FC = () => {
         const batch = rawFiles.slice(i, i + batchSize);
         for (const item of batch) {
           try {
-            if (isDicomBuffer(item.buffer)) {
+            if (isZipBuffer(item.buffer) || item.fileName.toLowerCase().endsWith('.zip')) {
+              try {
+                const zip = await JSZip.loadAsync(item.buffer);
+                const entries: JSZip.JSZipObject[] = [];
+                zip.forEach((_, zipEntry) => { if (!zipEntry.dir) entries.push(zipEntry); });
+                for (const entry of entries) {
+                  try {
+                    const entryBuf = await entry.async('arraybuffer');
+                    if (isDicomBuffer(entryBuf)) {
+                      const inst = parseDicomBufferFast(entryBuf, entry.name);
+                      if (inst) {
+                        inst.filePath = `${item.fileName}/${entry.name}`;
+                        parsedInstances.push(inst);
+                      }
+                    }
+                  } catch (_) {}
+                }
+              } catch (_) {}
+            } else if (isDicomBuffer(item.buffer)) {
               const inst = parseDicomBufferFast(item.buffer, item.fileName, item.filePath);
               if (inst) {
                 inst.filePath = item.filePath || item.fileName;
@@ -763,7 +785,11 @@ export const App: React.FC = () => {
 
       const newStudies = groupInstancesIntoStudies(parsedInstances, 'file', sourceDesc);
       setStudies(prev => [...newStudies, ...prev]);
-      handleSelectStudy(newStudies[0]);
+      if (targetViewportId && newStudies[0]?.series[0]) {
+        handleDropSeriesOnViewport(targetViewportId, newStudies[0].series[0], newStudies[0]);
+      } else {
+        handleSelectStudy(newStudies[0]);
+      }
       showNotification(`Loaded ${parsedInstances.length} DICOM images successfully.`);
     } catch (err: any) {
       setLoadingStatus(null);
@@ -810,12 +836,91 @@ export const App: React.FC = () => {
     }
   };
 
+  // Helper to recursively extract all files from folders and nested structures
+  const extractFilesFromDataTransfer = async (dt: DataTransfer): Promise<File[]> => {
+    const fileList: File[] = [];
+
+    if (dt.items && dt.items.length > 0 && typeof dt.items[0].webkitGetAsEntry === 'function') {
+      const readEntry = async (entry: any): Promise<void> => {
+        if (!entry) return;
+        if (entry.isFile) {
+          await new Promise<void>((resolve) => {
+            entry.file((file: File) => {
+              fileList.push(file);
+              resolve();
+            }, () => resolve());
+          });
+        } else if (entry.isDirectory) {
+          const reader = entry.createReader();
+          const readAllEntries = async (): Promise<any[]> => {
+            const all: any[] = [];
+            while (true) {
+              const entriesBatch: any[] = await new Promise((resolve) => {
+                reader.readEntries((entries: any[]) => resolve(entries || []), () => resolve([]));
+              });
+              if (!entriesBatch || entriesBatch.length === 0) break;
+              all.push(...entriesBatch);
+            }
+            return all;
+          };
+          const childEntries = await readAllEntries();
+          for (const child of childEntries) {
+            await readEntry(child);
+          }
+        }
+      };
+
+      for (let i = 0; i < dt.items.length; i++) {
+        const item = dt.items[i];
+        if (item.kind === 'file') {
+          const entry = item.webkitGetAsEntry();
+          if (entry) {
+            await readEntry(entry);
+          } else {
+            const f = item.getAsFile();
+            if (f) fileList.push(f);
+          }
+        }
+      }
+    } else if (dt.files && dt.files.length > 0) {
+      for (let i = 0; i < dt.files.length; i++) {
+        fileList.push(dt.files[i]);
+      }
+    }
+
+    return fileList;
+  };
+
+  // Handles external files, folders, and ZIP archives dropped onto windows or viewports
+  const handleDropExternalFiles = async (dt: DataTransfer, targetViewportId: string = activeViewportId) => {
+    // 1. Electron Native Path Detection (Instant directory scan)
+    if (window.electronAPI?.openPath && dt.files && dt.files.length > 0) {
+      const firstPath = (dt.files[0] as any).path;
+      if (firstPath) {
+        try {
+          const nativeFiles = await window.electronAPI.openPath(firstPath);
+          if (nativeFiles && nativeFiles.length > 0) {
+            await processRawBuffers(nativeFiles, 'Dropped Media', targetViewportId);
+            return;
+          }
+        } catch (err) {
+          console.warn('Native openPath failed, falling back to web extraction:', err);
+        }
+      }
+    }
+
+    // 2. Web / Browser HTML5 FileSystem API Extraction
+    const files = await extractFilesFromDataTransfer(dt);
+    if (files.length > 0) {
+      await processRawFiles(files, 'Drag & Drop Media', targetViewportId);
+    }
+  };
+
   // Global Window Drag & Drop for DICOM Files & Series
   const handleWindowDrop = async (e: React.DragEvent) => {
     e.preventDefault();
-    const files = e.dataTransfer.files;
-    if (files && files.length > 0) {
-      await processRawFiles(files, 'Drag & Drop Media');
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await handleDropExternalFiles(e.dataTransfer, activeViewportId);
       return;
     }
 
@@ -1264,6 +1369,7 @@ export const App: React.FC = () => {
             onUpdateViewportState={handleUpdateViewportState}
             onAddMeasurement={handleAddMeasurement}
             onDropSeriesOnViewport={handleDropSeriesOnViewport}
+            onDropExternalFiles={handleDropExternalFiles}
           />
 
           {/* High-Tech Medical Telemetry Bottom Status Bar */}

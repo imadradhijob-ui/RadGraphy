@@ -21,6 +21,7 @@ interface ViewportGridProps {
   onUpdateViewportState: (id: string, updates: Partial<ViewportState>) => void;
   onAddMeasurement: (viewportId: string, m: Measurement) => void;
   onDropSeriesOnViewport: (viewportId: string, series: DicomSeries, study: DicomStudy) => void;
+  onDropExternalFiles?: (dataTransfer: DataTransfer, viewportId: string) => void;
 }
 
 export const ViewportGrid: React.FC<ViewportGridProps> = ({
@@ -32,7 +33,8 @@ export const ViewportGrid: React.FC<ViewportGridProps> = ({
   onActivateViewport,
   onUpdateViewportState,
   onAddMeasurement,
-  onDropSeriesOnViewport
+  onDropSeriesOnViewport,
+  onDropExternalFiles
 }) => {
   // Determine number of rows and columns based on layout
   const getGridConfig = () => {
@@ -112,6 +114,10 @@ export const ViewportGrid: React.FC<ViewportGridProps> = ({
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
+                  if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                    onDropExternalFiles?.(e.dataTransfer, vp.id);
+                    return;
+                  }
                   try {
                     const rawData = e.dataTransfer.getData('application/json') || e.dataTransfer.getData('text/plain');
                     if (rawData) {

@@ -1186,8 +1186,8 @@ export const DicomViewport: React.FC<DicomViewportProps> = ({
             <Download className="w-7 h-7 text-cyan-300 animate-bounce" />
           </div>
           <div className="text-center">
-            <div className="text-sm font-bold text-white tracking-wide">Drop Series Here to Display</div>
-            <div className="text-xs text-cyan-300 font-medium">Release mouse to load this series in viewport</div>
+            <div className="text-sm font-bold text-white tracking-wide">Drop DICOM Files, Folder, ZIP, or Series</div>
+            <div className="text-xs text-cyan-300 font-medium">Release mouse to open and inspect in this viewport</div>
           </div>
         </div>
       )}

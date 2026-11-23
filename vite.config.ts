@@ -127,11 +127,12 @@ export default defineConfig({
 
         server.middlewares.use('/api/pacs/store', (req, res) => {
           if (req.method === 'POST') {
-            let body = ''
-            req.on('data', chunk => { body += chunk })
+            const chunks = []
+            req.on('data', chunk => { chunks.push(chunk) })
             req.on('end', async () => {
               try {
-                const payload = JSON.parse(body)
+                const fullBuf = Buffer.concat(chunks)
+                const payload = JSON.parse(fullBuf.toString('utf8'))
                 const { serverConfig, instances } = payload
                 const { storeDicomInstances } = getDicomNetwork()
                 const result = await storeDicomInstances(serverConfig, instances)
@@ -156,25 +157,24 @@ export default defineConfig({
 
           const findDrive = () => new Promise((resolve) => {
             if (process.platform !== 'win32') return resolve(null)
-            exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Select-Object Drive, MediaLoaded, Name, VolumeName | ConvertTo-Json"', { timeout: 4000 }, (err, stdout) => {
+            const cmd = 'powershell -NoProfile -Command "[System.IO.DriveInfo]::GetDrives() | Select-Object Name, DriveType, IsReady, VolumeLabel | ConvertTo-Json"'
+            exec(cmd, { timeout: 4000 }, (err, stdout) => {
               try {
                 if (!err && stdout && stdout.trim()) {
                   let data = JSON.parse(stdout.trim())
                   if (!Array.isArray(data)) data = [data]
                   for (const item of data) {
-                    const drive = item.Drive || (item.DeviceID ? item.DeviceID.match(/([A-Z]:)/)?.[1] : null)
-                    if (drive && (item.MediaLoaded === true || item.MediaLoaded === 'True')) {
-                      const root = drive.endsWith('\\') ? drive : drive + '\\'
+                    const isCd = item.DriveType === 5 || item.DriveType === 'CDRom'
+                    const isReady = item.IsReady === true || item.IsReady === 'True'
+                    if (isCd && isReady && item.Name) {
+                      const root = item.Name.endsWith('\\') ? item.Name : item.Name + '\\'
                       if (fs.existsSync(root)) {
-                        const files = fs.readdirSync(root)
-                        if (files.length > 0) {
-                          return resolve({
-                            driveLetter: drive.replace(/\\$/, ''),
-                            name: item.Name || 'CD/DVD Drive',
-                            volumeName: item.VolumeName || 'DICOM_DISC',
-                            rootPath: root
-                          })
-                        }
+                        return resolve({
+                          driveLetter: item.Name.replace(/\\$/, ''),
+                          name: 'Optical CD/DVD Drive',
+                          volumeName: item.VolumeLabel || 'DICOM_MEDIA',
+                          rootPath: root
+                        })
                       }
                     }
                   }
@@ -220,23 +220,24 @@ export default defineConfig({
           const findDrive = () => new Promise((resolve) => {
             if (process.platform !== 'win32') return resolve(null)
 
-            // 1. Check Win32_CDROMDrive strictly with MediaLoaded = true
-            exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Where-Object { $_.MediaLoaded -eq $true } | Select-Object Drive, Name, VolumeName | ConvertTo-Json"', { timeout: 3000 }, (err, stdout) => {
+            const cmd = 'powershell -NoProfile -Command "[System.IO.DriveInfo]::GetDrives() | Select-Object Name, DriveType, IsReady, VolumeLabel | ConvertTo-Json"'
+            exec(cmd, { timeout: 3500 }, (err, stdout) => {
               try {
                 if (!err && stdout && stdout.trim()) {
                   let data = JSON.parse(stdout.trim())
                   if (!Array.isArray(data)) data = [data]
                   for (const item of data) {
-                    const drive = item.Drive || (item.DeviceID ? item.DeviceID.match(/([A-Z]:)/)?.[1] : null)
-                    if (drive) {
-                      const root = drive.endsWith('\\') ? drive : drive + '\\'
+                    const isCd = item.DriveType === 5 || item.DriveType === 'CDRom'
+                    const isReady = item.IsReady === true || item.IsReady === 'True'
+                    if (isCd && isReady && item.Name) {
+                      const root = item.Name.endsWith('\\') ? item.Name : item.Name + '\\'
                       if (fs.existsSync(root)) {
                         const files = fs.readdirSync(root)
                         if (files.length > 0) {
                           return resolve({
-                            driveLetter: drive.replace(/\\$/, ''),
-                            name: item.Name || 'CD/DVD Drive',
-                            volumeName: item.VolumeName || 'DICOM_DISC',
+                            driveLetter: item.Name.replace(/\\$/, ''),
+                            name: 'Optical CD/DVD Drive',
+                            volumeName: item.VolumeLabel || 'DICOM_MEDIA',
                             rootPath: root
                           })
                         }
@@ -246,55 +247,25 @@ export default defineConfig({
                 }
               } catch (_) {}
 
-              // 2. Check LogicalDisk for DriveType 5 (Compact Disc)
-              exec('powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DriveType = 5\\" | Select-Object DeviceID, VolumeName | ConvertTo-Json"', { timeout: 2500 }, (err2, stdout2) => {
+              for (let i = 68; i <= 90; i++) {
+                const letter = String.fromCharCode(i) + ':'
+                const root = letter + '\\'
                 try {
-                  if (!err2 && stdout2 && stdout2.trim()) {
-                    let data = JSON.parse(stdout2.trim())
-                    if (!Array.isArray(data)) data = [data]
-                    for (const item of data) {
-                      const drive = item.DeviceID
-                      if (drive) {
-                        const root = drive.endsWith('\\') ? drive : drive + '\\'
-                        if (fs.existsSync(root)) {
-                          const files = fs.readdirSync(root)
-                          if (files.length > 0) {
-                            return resolve({
-                              driveLetter: drive.replace(/\\$/, ''),
-                              name: 'Optical CD/DVD Drive',
-                              volumeName: item.VolumeName || 'DICOM_DISC',
-                              rootPath: root
-                            })
-                          }
-                        }
-                      }
+                  if (fs.existsSync(root)) {
+                    const hasDicomDir = fs.existsSync(path.join(root, 'DICOMDIR')) || fs.existsSync(path.join(root, 'dicomdir'))
+                    const hasDicomFolder = fs.existsSync(path.join(root, 'DICOM')) || fs.existsSync(path.join(root, 'dicom'))
+                    if (hasDicomDir || hasDicomFolder) {
+                      return resolve({
+                        driveLetter: letter,
+                        name: 'DICOM Media Drive',
+                        volumeName: 'DICOM_MEDIA',
+                        rootPath: root
+                      })
                     }
                   }
                 } catch (_) {}
-
-                // 3. Fallback: Check letters D..Z ONLY if an actual DICOMDIR file or DICOM folder exists
-                // NEVER scan ordinary hard drives!
-                for (let i = 68; i <= 90; i++) {
-                  const letter = String.fromCharCode(i) + ':'
-                  const root = letter + '\\'
-                  try {
-                    if (fs.existsSync(root)) {
-                      const hasDicomDir = fs.existsSync(path.join(root, 'DICOMDIR')) || fs.existsSync(path.join(root, 'dicomdir'))
-                      const hasDicomFolder = fs.existsSync(path.join(root, 'DICOM')) || fs.existsSync(path.join(root, 'dicom'))
-                      if (hasDicomDir || hasDicomFolder) {
-                        return resolve({
-                          driveLetter: letter,
-                          name: 'DICOM Media Drive',
-                          volumeName: 'DICOM_MEDIA',
-                          rootPath: root
-                        })
-                      }
-                    }
-                  } catch (_) {}
-                }
-
-                resolve(null)
-              })
+              }
+              resolve(null)
             })
           })
 

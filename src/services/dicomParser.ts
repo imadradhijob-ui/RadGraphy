@@ -84,6 +84,19 @@ export function isDicomBuffer(buffer: ArrayBuffer): boolean {
 }
 
 /**
+ * Checks if a byte buffer has ZIP archive signature (PK\x03\x04 or PK\x05\x06)
+ */
+export function isZipBuffer(buffer: ArrayBuffer | Uint8Array): boolean {
+  if (buffer.byteLength < 4) return false;
+  const arr = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  return arr[0] === 0x50 && arr[1] === 0x4B && (
+    (arr[2] === 0x03 && arr[3] === 0x04) ||
+    (arr[2] === 0x05 && arr[3] === 0x06) ||
+    (arr[2] === 0x07 && arr[3] === 0x08)
+  );
+}
+
+/**
  * Automatically converts preamble-less DICOM buffers into standard Part 10 DICOM byte arrays
  */
 export function ensurePart10Dicom(byteArray: Uint8Array): Uint8Array {
@@ -842,6 +855,7 @@ export function parseDicomBufferFast(
   // Store essential raw tags for fast access (avoiding 100K object allocations)
   const rawTags: Record<string, DicomTag> = {
     '(0002,0010)': { tag: '(0002,0010)', name: 'TransferSyntaxUID', vr: 'UI', value: transferSyntaxUid },
+    '(0008,0016)': { tag: '(0008,0016)', name: 'SOPClassUID', vr: 'UI', value: sopClassUid },
     '(0010,0010)': { tag: '(0010,0010)', name: 'PatientName', vr: 'PN', value: getString('x00100010', '00100010', 'Anonymous') },
     '(0010,0020)': { tag: '(0010,0020)', name: 'PatientID', vr: 'LO', value: getString('x00100020', '00100020', 'NO_ID') },
     '(0010,0030)': { tag: '(0010,0030)', name: 'PatientBirthDate', vr: 'DA', value: getString('x00100030', '00100030', '') },
@@ -866,6 +880,7 @@ export function parseDicomBufferFast(
 
   return {
     sopInstanceUid,
+    sopClassUid,
     instanceNumber,
     echoNumber,
     acquisitionNumber,
@@ -1419,6 +1434,11 @@ export function groupInstancesIntoStudies(
   }>();
 
   for (const inst of instances) {
+    // Skip standalone non-image metadata files (e.g. DICOMDIR index records with 0x0 dimensions)
+    if ((inst.rows === 0 || inst.columns === 0) && !inst.customFramePixels) {
+      continue;
+    }
+
     const studyUid = inst.studyInstanceUid || 'default_study';
     const seriesUid = inst.seriesInstanceUid || 'default_series';
 

@@ -21,6 +21,7 @@ import {
 import { DicomInstance, DicomSeries, DicomStudy, Measurement, ViewportState } from '../types/dicom';
 import { ExportService } from '../services/exportService';
 import { PacsService } from '../services/pacsClient';
+import { DicomDirGenerator } from '../services/dicomdirGenerator';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -199,61 +200,85 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     });
 
     try {
-      const targetInstances: DicomInstance[] = [];
+      const rawInstances: DicomInstance[] = [];
       if (pacsExportScope === 'current') {
-        targetInstances.push(currentInstance);
+        rawInstances.push(currentInstance);
       } else {
         for (const ser of study.series) {
           for (const inst of ser.instances) {
-            targetInstances.push(inst);
+            rawInstances.push(inst);
           }
         }
       }
 
+      // 1. Deduplicate multi-frame slices that reference the exact same file buffer
+      // (prevents sending 1611 copies of an entire 500MB multi-frame DICOM file)
+      const seenBuffers = new Set<any>();
+      const seenFiles = new Set<string>();
+      const targetInstances: DicomInstance[] = [];
+
+      for (const inst of rawInstances) {
+        if (inst.filePath && seenFiles.has(inst.filePath)) continue;
+        if (inst.rawBuffer && seenBuffers.has(inst.rawBuffer)) continue;
+        if (inst.filePath) seenFiles.add(inst.filePath);
+        if (inst.rawBuffer) seenBuffers.add(inst.rawBuffer);
+        targetInstances.push(inst);
+      }
+
       const total = targetInstances.length;
-      const BATCH_SIZE = 15;
+      // Use small, safe batch sizes (3 instances per batch) to prevent V8 string length limits
+      const BATCH_SIZE = 3;
       let totalStored = 0;
 
       for (let i = 0; i < total; i += BATCH_SIZE) {
         const batchSlice = targetInstances.slice(i, i + BATCH_SIZE);
-        const batchPayload: Array<{ fileName: string; buffer: ArrayBuffer | string }> = [];
+        const batchPayload: Array<{ fileName: string; buffer: ArrayBuffer | Uint8Array | string }> = [];
 
         for (const inst of batchSlice) {
-          let buf: ArrayBuffer | null = null;
-          if (inst.rawBuffer && inst.rawBuffer.byteLength > 128) {
+          let buf: ArrayBuffer | Uint8Array | null = null;
+          if (inst.rawBuffer && (inst.rawBuffer as any).byteLength > 128) {
             buf = inst.rawBuffer;
           } else if (inst.filePath && window.electronAPI?.readFile) {
             buf = await window.electronAPI.readFile(inst.filePath);
           }
 
-          if (buf && buf.byteLength > 128) {
-            const fileName = `IM_${String(inst.instanceNumber || 1).padStart(4, '0')}.dcm`;
+          if (!buf || (buf as any).byteLength < 128) {
+            buf = DicomDirGenerator.synthesizeDicomFile(inst, study);
+          }
+
+          if (buf && (buf as any).byteLength > 128) {
+            const fileName = `${inst.sopInstanceUid || `IM_${String(inst.instanceNumber || 1).padStart(4, '0')}`}.dcm`;
             batchPayload.push({ fileName, buffer: buf });
           }
         }
 
+        const currentNum = Math.min(i + batchSlice.length, total);
+        const percent = Math.round((currentNum / total) * 100);
+        const msg = `Pushing slices ${i + 1} - ${currentNum} of ${total} to [${targetServer.aeTitle || targetServer.name}]...`;
+
+        setPacsSendStatus(msg);
+        setPacsProgress({
+          percent,
+          current: currentNum,
+          total,
+          status: msg
+        });
+
         if (batchPayload.length > 0) {
           const res = await PacsService.sendToPacs(targetServer, batchPayload);
-          if (!res.success) {
-            throw new Error(res.error || `Failed storing batch at index ${i}`);
+          if (!res.success && res.error) {
+            throw new Error(res.error);
           }
-          totalStored += res.storedCount || batchPayload.length;
+          totalStored += (res.storedCount || batchPayload.length);
         }
-
-        const pct = Math.min(100, Math.round(((i + batchSlice.length) / total) * 100));
-        setPacsProgress({
-          percent: pct,
-          current: Math.min(total, i + batchSlice.length),
-          total,
-          status: `Pushed ${totalStored} of ${total} instances...`
-        });
       }
 
-      setSuccessMessage(`Successfully sent ${totalStored} DICOM instances to ${targetServer.name}!`);
+      setSuccessMessage(`Successfully pushed ${totalStored} DICOM instances to PACS [${targetServer.aeTitle || targetServer.name}]!`);
       setTimeout(() => {
         setSuccessMessage('');
         setPacsProgress(null);
-      }, 3000);
+        onClose();
+      }, 2500);
     } catch (err: any) {
       alert(`PACS C-STORE Error: ${err?.message || 'Failed to push instances to PACS'}`);
       setPacsProgress(null);

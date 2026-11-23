@@ -1822,6 +1822,7 @@ function extractRawDatasetFromPart10(p10Buf) {
   let offset = 0;
   let sopClassUid = '';
   let sopInstanceUid = '';
+  let transferSyntaxUid = '';
 
   // Check for 128-byte preamble + 'DICM'
   if (p10Buf.length >= 132 &&
@@ -1856,12 +1857,17 @@ function extractRawDatasetFromPart10(p10Buf) {
       else if (element === 0x0003) {
         sopInstanceUid = p10Buf.toString('ascii', valOffset, valEnd).replace(/\0+$/, '').trim();
       }
+      // (0002,0010) TransferSyntaxUID
+      else if (element === 0x0010) {
+        transferSyntaxUid = p10Buf.toString('ascii', valOffset, valEnd).replace(/\0+$/, '').trim();
+      }
 
       if (valLen < 0 || isNaN(valLen)) {
         offset += headerLen;
         continue;
       }
-      offset = Math.max(offset + headerLen, valEnd);
+      const padLen = (valLen % 2 !== 0) ? valLen + 1 : valLen;
+      offset = Math.max(offset + headerLen, valOffset + padLen);
     }
   }
 
@@ -1877,7 +1883,8 @@ function extractRawDatasetFromPart10(p10Buf) {
   return {
     rawDataset,
     sopClassUid,
-    sopInstanceUid
+    sopInstanceUid,
+    transferSyntaxUid: transferSyntaxUid || TS_EXPLICIT_VR_LE
   };
 }
 
@@ -1922,12 +1929,12 @@ function streamCStoreInstance(socket, pcId, sopClassUid, sopInstanceUid, rawData
     prioElem.writeUInt16LE(0x0000, 8);
     cmdBufs.push(prioElem);
 
-    // (0000,0800) Data Set Type: US 0x0001 (Dataset Present)
+    // (0000,0800) Data Set Type: US 0x0102 (Dataset Present per DICOM PS 3.7)
     const dsElem = Buffer.alloc(10);
     dsElem.writeUInt16LE(0x0000, 0);
     dsElem.writeUInt16LE(0x0800, 2);
     dsElem.writeUInt32LE(2, 4);
-    dsElem.writeUInt16LE(0x0001, 8);
+    dsElem.writeUInt16LE(0x0102, 8);
     cmdBufs.push(dsElem);
 
     // (0000,1000) Affected SOP Instance UID
@@ -1999,6 +2006,46 @@ function streamCStoreInstance(socket, pcId, sopClassUid, sopInstanceUid, rawData
 }
 
 /**
+ * Helper to parse presentation contexts from A-ASSOCIATE-AC PDU
+ */
+function parseAssociateAcPresentationContexts(pduPayload) {
+  let off = 68; // Skip 68 bytes fixed header
+  const contexts = new Map(); // pcId -> { accepted: boolean, result: number, transferSyntax: string }
+
+  while (off + 4 <= pduPayload.length) {
+    const itemType = pduPayload[off];
+    const itemLen = pduPayload.readUInt16BE(off + 2);
+    const itemEnd = off + 4 + itemLen;
+
+    if (itemType === 0x21 && off + 8 <= pduPayload.length) { // Presentation Context AC Item
+      const pcId = pduPayload[off + 4];
+      const result = pduPayload[off + 6]; // 0 = Acceptance
+      let acceptedTs = '';
+
+      let subOff = off + 8;
+      while (subOff + 4 <= itemEnd) {
+        const subType = pduPayload[subOff];
+        const subLen = pduPayload.readUInt16BE(subOff + 2);
+        if (subType === 0x40 && subOff + 4 + subLen <= itemEnd) {
+          acceptedTs = pduPayload.toString('ascii', subOff + 4, subOff + 4 + subLen).replace(/\0+$/, '').trim();
+          break;
+        }
+        subOff += 4 + subLen;
+      }
+
+      contexts.set(pcId, {
+        accepted: result === 0x00,
+        result,
+        transferSyntax: acceptedTs
+      });
+    }
+    off = itemEnd;
+  }
+
+  return contexts;
+}
+
+/**
  * Stores (pushes) DICOM instances to PACS server via C-STORE SCU
  */
 async function storeDicomInstances(serverConfig, instances) {
@@ -2007,11 +2054,11 @@ async function storeDicomInstances(serverConfig, instances) {
   }
 
   const callingAe = (serverConfig.callingAeTitle || 'RADNODE_VIEWER').trim();
-  const calledAe = serverConfig.aeTitle || 'INFOMED';
+  const calledAe = (serverConfig.aeTitle || 'INFOMED').trim();
 
-  // 1. Process instances and extract raw dataset & SOP Class UID & SOP Instance UID
+  // 1. Process instances and extract raw dataset & SOP Class UID & SOP Instance UID & Transfer Syntax
   const preparedInstances = [];
-  const sopClassMap = new Map(); // sopClassUid -> pcId
+  const sopClassMap = new Map(); // sopClassUid -> { pcId, transferSyntaxes: Set<string> }
 
   let nextPcId = 1;
   for (const inst of instances) {
@@ -2026,22 +2073,35 @@ async function storeDicomInstances(serverConfig, instances) {
       continue;
     }
 
-    const { rawDataset, sopClassUid, sopInstanceUid } = extractRawDatasetFromPart10(p10Buf);
+    const { rawDataset, sopClassUid, sopInstanceUid, transferSyntaxUid } = extractRawDatasetFromPart10(p10Buf);
     if (!sopClassUid || !sopInstanceUid || !rawDataset || rawDataset.length === 0) {
       continue;
     }
 
     if (!sopClassMap.has(sopClassUid)) {
-      sopClassMap.set(sopClassUid, nextPcId);
+      const tsSet = new Set([
+        transferSyntaxUid,
+        TS_EXPLICIT_VR_LE,
+        TS_IMPLICIT_VR_LE,
+        '1.2.840.10008.1.2.4.70', // JPEG Lossless
+        '1.2.840.10008.1.2.4.50', // JPEG Baseline
+        '1.2.840.10008.1.2.4.80', // JPEG-LS Lossless
+        '1.2.840.10008.1.2.4.90', // JPEG 2000 Lossless
+        '1.2.840.10008.1.2.5'     // RLE Lossless
+      ]);
+      sopClassMap.set(sopClassUid, { pcId: nextPcId, transferSyntaxes: tsSet });
       nextPcId += 2;
+    } else {
+      sopClassMap.get(sopClassUid).transferSyntaxes.add(transferSyntaxUid);
     }
 
     preparedInstances.push({
       fileName: inst.fileName || `${sopInstanceUid}.dcm`,
       sopClassUid,
       sopInstanceUid,
+      transferSyntaxUid,
       rawDataset,
-      pcId: sopClassMap.get(sopClassUid)
+      pcId: sopClassMap.get(sopClassUid).pcId
     });
   }
 
@@ -2051,11 +2111,11 @@ async function storeDicomInstances(serverConfig, instances) {
 
   // 2. Prepare presentation contexts for association
   const presentationContexts = [];
-  for (const [sopClassUid, pcId] of sopClassMap.entries()) {
+  for (const [sopClassUid, info] of sopClassMap.entries()) {
     presentationContexts.push({
-      id: pcId,
+      id: info.pcId,
       abstractSyntax: sopClassUid,
-      transferSyntaxes: [TS_EXPLICIT_VR_LE, TS_IMPLICIT_VR_LE]
+      transferSyntaxes: Array.from(info.transferSyntaxes)
     });
   }
 
@@ -2071,9 +2131,10 @@ async function storeDicomInstances(serverConfig, instances) {
     let storedCount = 0;
     let failedCount = 0;
     let isFinished = false;
+    let acceptedContextsMap = new Map();
 
     let timer = setTimeout(() => {
-      cleanup(new Error('C-STORE SCU timeout (60s)'));
+      cleanup(new Error(`C-STORE SCU timeout (60s) connecting to ${calledAe}@${serverConfig.host}:${serverConfig.port}`));
     }, 60000);
 
     function cleanup(err = null) {
@@ -2097,6 +2158,15 @@ async function storeDicomInstances(serverConfig, instances) {
       }
 
       const inst = preparedInstances[currentInstIndex];
+      const pcCtx = acceptedContextsMap.get(inst.pcId);
+      if (pcCtx && !pcCtx.accepted) {
+        console.warn(`[C-STORE SCU] Skipping instance ${inst.sopInstanceUid}: Presentation context ${inst.pcId} was not accepted by PACS.`);
+        failedCount++;
+        currentInstIndex++;
+        sendNextInstance();
+        return;
+      }
+
       activeMsgId++;
       console.log(`[C-STORE SCU] Sending [${currentInstIndex + 1}/${preparedInstances.length}] SOP: ${inst.sopInstanceUid}...`);
       try {
@@ -2122,7 +2192,13 @@ async function storeDicomInstances(serverConfig, instances) {
         clientBuffer = remBuf.length === 0 ? Buffer.alloc(0) : Buffer.from(remBuf);
 
         if (pduType === PDU_A_ASSOCIATE_AC) {
-          console.log(`[C-STORE SCU] Association established with ${calledAe}. Starting push of ${preparedInstances.length} instances...`);
+          acceptedContextsMap = parseAssociateAcPresentationContexts(pduPayload);
+          console.log(`[C-STORE SCU] Association established with ${calledAe}. Accepted contexts: ${acceptedContextsMap.size}`);
+          const anyAccepted = Array.from(acceptedContextsMap.values()).some(c => c.accepted);
+          if (!anyAccepted) {
+            cleanup(new Error(`PACS server [${calledAe}] rejected all Presentation Contexts (SOP classes / transfer syntaxes). Check PACS server configuration and permissions.`));
+            return;
+          }
           sendNextInstance();
         } else if (pduType === PDU_P_DATA_TF) {
           let off = 0;
@@ -2150,12 +2226,26 @@ async function storeDicomInstances(serverConfig, instances) {
             }
           }
         } else if (pduType === PDU_A_ASSOCIATE_RJ || pduType === PDU_A_ABORT || pduType === PDU_A_RELEASE_RP) {
-          cleanup(pduType === PDU_A_RELEASE_RP ? null : new Error(`Association closed (0x${pduType.toString(16)})`));
+          let reasonMsg = `Association rejected or closed by PACS server [${calledAe}] (PDU 0x${pduType.toString(16)}).`;
+          if (pduType === PDU_A_ASSOCIATE_RJ) {
+            reasonMsg = `PACS server [${calledAe}] rejected association. Verify Called AE Title ("${calledAe}") and Calling AE Title ("${callingAe}") in PACS settings.`;
+          }
+          cleanup(pduType === PDU_A_RELEASE_RP ? null : new Error(reasonMsg));
         }
       }
     });
 
-    socket.on('error', (err) => cleanup(err));
+    socket.on('error', (err) => {
+      let errMsg = err.message || 'Connection error';
+      if (err.code === 'ECONNRESET') {
+        errMsg = `PACS server [${calledAe}] reset connection (ECONNRESET). Verify that Calling AE Title "${callingAe}" is authorized on the PACS server (${serverConfig.host}:${serverConfig.port}) and port is open.`;
+      } else if (err.code === 'ECONNREFUSED') {
+        errMsg = `Connection refused by PACS server at ${serverConfig.host}:${serverConfig.port}. Please verify the PACS host and port.`;
+      } else if (err.code === 'ETIMEDOUT') {
+        errMsg = `Connection timed out to PACS server at ${serverConfig.host}:${serverConfig.port}.`;
+      }
+      cleanup(new Error(errMsg));
+    });
     socket.on('close', () => cleanup(null));
   });
 }

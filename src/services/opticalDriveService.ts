@@ -1,6 +1,7 @@
 import { DicomStudy, DicomInstance } from '../types/dicom';
-import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from './dicomParser';
+import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer, isZipBuffer } from './dicomParser';
 import { parseDicomDirBuffer } from './dicomdirParser';
+import JSZip from 'jszip';
 
 export interface OpticalDriveResult {
   success: boolean;
@@ -81,8 +82,25 @@ export class OpticalDriveService {
             const buf = typeof f.buffer === 'string' ? base64ToArrayBuffer(f.buffer) : f.buffer;
             if (f.fileName.toUpperCase() === 'DICOMDIR') {
               try { parseDicomDirBuffer(buf); } catch (_) {}
-            }
-            if (isDicomBuffer(buf)) {
+            } else if (isZipBuffer(buf) || f.fileName.toLowerCase().endsWith('.zip')) {
+              try {
+                const zip = await JSZip.loadAsync(buf);
+                const entries: JSZip.JSZipObject[] = [];
+                zip.forEach((_, zipEntry) => { if (!zipEntry.dir) entries.push(zipEntry); });
+                for (const entry of entries) {
+                  try {
+                    const entryBuf = await entry.async('arraybuffer');
+                    if (isDicomBuffer(entryBuf)) {
+                      const inst = parseDicomBufferFast(entryBuf, entry.name);
+                      if (inst) {
+                        inst.filePath = `${f.fileName}/${entry.name}`;
+                        allInstances.push(inst);
+                      }
+                    }
+                  } catch (_) {}
+                }
+              } catch (_) {}
+            } else if (isDicomBuffer(buf)) {
               const inst = parseDicomBufferFast(buf, f.fileName);
               if (inst) {
                 inst.filePath = f.filePath || f.fileName;
@@ -200,8 +218,25 @@ export class OpticalDriveService {
                 const rawBuf = base64ToArrayBuffer(msg.file.buffer);
                 if (msg.file.fileName?.toUpperCase() === 'DICOMDIR') {
                   try { parseDicomDirBuffer(rawBuf); } catch (_) {}
-                }
-                if (isDicomBuffer(rawBuf)) {
+                } else if (isZipBuffer(rawBuf) || msg.file.fileName?.toLowerCase().endsWith('.zip')) {
+                  try {
+                    const zip = await JSZip.loadAsync(rawBuf);
+                    const entries: JSZip.JSZipObject[] = [];
+                    zip.forEach((_, zipEntry) => { if (!zipEntry.dir) entries.push(zipEntry); });
+                    for (const entry of entries) {
+                      try {
+                        const entryBuf = await entry.async('arraybuffer');
+                        if (isDicomBuffer(entryBuf)) {
+                          const inst = parseDicomBufferFast(entryBuf, entry.name);
+                          if (inst) {
+                            inst.filePath = `${msg.file.fileName}/${entry.name}`;
+                            allInstances.push(inst);
+                          }
+                        }
+                      } catch (_) {}
+                    }
+                  } catch (_) {}
+                } else if (isDicomBuffer(rawBuf)) {
                   const inst = parseDicomBufferFast(rawBuf, msg.file.fileName);
                   if (inst) {
                     inst.filePath = msg.file.filePath || msg.file.fileName;

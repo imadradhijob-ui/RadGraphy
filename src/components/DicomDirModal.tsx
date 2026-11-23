@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Disc, FolderOpen, CheckCircle2, AlertTriangle, X, HardDrive, RefreshCw, AlertCircle } from 'lucide-react';
 import { DicomStudy } from '../types/dicom';
-import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer } from '../services/dicomParser';
+import { parseDicomBufferFast, groupInstancesIntoStudies, isDicomBuffer, isZipBuffer } from '../services/dicomParser';
 import { parseDicomDirBuffer } from '../services/dicomdirParser';
 import { OpticalDriveService, OpticalDriveResult } from '../services/opticalDriveService';
+import JSZip from 'jszip';
 
 interface DicomDirModalProps {
   isOpen: boolean;
@@ -141,9 +142,25 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
 
           if (file.name.toUpperCase() === 'DICOMDIR' || file.name.toUpperCase().endsWith('DICOMDIR')) {
             try { parseDicomDirBuffer(buffer); } catch (_) {}
-          }
-
-          if (isDicomBuffer(buffer)) {
+          } else if (isZipBuffer(buffer) || file.name.toLowerCase().endsWith('.zip')) {
+            try {
+              const zip = await JSZip.loadAsync(buffer);
+              const entries: JSZip.JSZipObject[] = [];
+              zip.forEach((_, zipEntry) => { if (!zipEntry.dir) entries.push(zipEntry); });
+              for (const entry of entries) {
+                try {
+                  const entryBuf = await entry.async('arraybuffer');
+                  if (isDicomBuffer(entryBuf)) {
+                    const inst = parseDicomBufferFast(entryBuf, entry.name);
+                    if (inst) {
+                      inst.filePath = `${file.name}/${entry.name}`;
+                      instances.push(inst);
+                    }
+                  }
+                } catch (_) {}
+              }
+            } catch (_) {}
+          } else if (isDicomBuffer(buffer)) {
             const inst = parseDicomBufferFast(buffer, file.name);
             if (inst) {
               inst.filePath = (file as any).path || file.name;
@@ -171,7 +188,55 @@ export const DicomDirModal: React.FC<DicomDirModalProps> = ({
     }
   };
 
-  const handleManualFolderClick = () => {
+  const handleManualFolderClick = async () => {
+    if (window.electronAPI?.openDicomDirectory) {
+      try {
+        setScanStatus('reading');
+        setStatusMessage('Selecting and scanning directory...');
+        const filesList = await window.electronAPI.openDicomDirectory();
+        if (filesList && filesList.length > 0) {
+          const instances: any[] = [];
+          for (const f of filesList) {
+            try {
+              if (isZipBuffer(f.buffer) || f.fileName.toLowerCase().endsWith('.zip')) {
+                const zip = await JSZip.loadAsync(f.buffer);
+                const entries: JSZip.JSZipObject[] = [];
+                zip.forEach((_, zipEntry) => { if (!zipEntry.dir) entries.push(zipEntry); });
+                for (const entry of entries) {
+                  const entryBuf = await entry.async('arraybuffer');
+                  if (isDicomBuffer(entryBuf)) {
+                    const inst = parseDicomBufferFast(entryBuf, entry.name);
+                    if (inst) {
+                      inst.filePath = `${f.fileName}/${entry.name}`;
+                      instances.push(inst);
+                    }
+                  }
+                }
+              } else if (isDicomBuffer(f.buffer)) {
+                const inst = parseDicomBufferFast(f.buffer, f.fileName);
+                if (inst) {
+                  inst.filePath = f.filePath || f.fileName;
+                  instances.push(inst);
+                }
+              }
+            } catch (_) {}
+          }
+          if (instances.length > 0) {
+            const grouped = groupInstancesIntoStudies(instances, 'disc', 'Local Study Folder');
+            onStudiesLoaded(grouped);
+            setScanStatus('success');
+            setStatusMessage(`Loaded ${grouped.length} study (${instances.length} images) successfully!`);
+            setTimeout(() => onClose(), 600);
+            return;
+          }
+        }
+        setScanStatus('idle');
+      } catch (err: any) {
+        setScanStatus('error');
+        setErrorMessage(err?.message || 'Error opening directory');
+      }
+      return;
+    }
     folderInputRef.current?.click();
   };
 

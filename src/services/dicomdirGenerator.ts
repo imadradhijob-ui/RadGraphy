@@ -429,6 +429,7 @@ export class DicomDirGenerator {
    */
   public static synthesizeDicomFile(inst: DicomInstance, study: DicomStudy): Uint8Array {
     const writer = new BinaryWriter(65536 + (inst.rows * inst.columns * 2));
+    const sopClass = String(inst.sopClassUid || inst.rawTags?.['(0008,0016)']?.value || '1.2.840.10008.5.1.4.1.1.2');
 
     // 128 bytes preamble + DICM
     writer.writeBytes(new Uint8Array(128));
@@ -437,7 +438,7 @@ export class DicomDirGenerator {
     // Meta Information
     const metaWriter = new BinaryWriter(1024);
     metaWriter.writeElement(0x0002, 0x0001, 'OB', new Uint8Array([0x00, 0x01]));
-    metaWriter.writeElement(0x0002, 0x0002, 'UI', '1.2.840.10008.5.1.4.1.1.2'); // CT Image Storage default
+    metaWriter.writeElement(0x0002, 0x0002, 'UI', sopClass);
     metaWriter.writeElement(0x0002, 0x0003, 'UI', inst.sopInstanceUid || `1.2.826.0.1.3680043.9.7744.1.${Date.now()}`);
     metaWriter.writeElement(0x0002, 0x0010, 'UI', '1.2.840.10008.1.2.1'); // Explicit VR Little Endian
     metaWriter.writeElement(0x0002, 0x0012, 'UI', '1.2.826.0.1.3680043.9.7744.1');
@@ -447,7 +448,7 @@ export class DicomDirGenerator {
     writer.writeBytes(metaBytes);
 
     // Main DICOM tags
-    writer.writeElement(0x0008, 0x0016, 'UI', '1.2.840.10008.5.1.4.1.1.2');
+    writer.writeElement(0x0008, 0x0016, 'UI', sopClass);
     writer.writeElement(0x0008, 0x0018, 'UI', inst.sopInstanceUid);
     writer.writeElement(0x0008, 0x0020, 'DA', study.studyDate || '20260101');
     writer.writeElement(0x0008, 0x1030, 'LO', study.studyDescription || 'DICOM Study');

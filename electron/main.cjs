@@ -226,7 +226,7 @@ app.on('window-all-closed', () => {
 
 // Recursive folder scanner with depth limit and cancellation check
 function scanDirectoryRecursively(dirPath, filesList = [], currentDepth = 0, shouldAbort = () => false) {
-  if (currentDepth > 8 || shouldAbort()) return filesList;
+  if (currentDepth > 15 || shouldAbort()) return filesList;
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     for (const entry of entries) {
@@ -237,8 +237,8 @@ function scanDirectoryRecursively(dirPath, filesList = [], currentDepth = 0, sho
       } else if (entry.isFile()) {
         try {
           const stats = fs.statSync(fullPath);
-          // Only read potential DICOM files (under 60MB, >= 8 bytes)
-          if (stats.size >= 8 && stats.size <= 60 * 1024 * 1024) {
+          // Only read potential DICOM files (under 120MB, >= 8 bytes)
+          if (stats.size >= 8 && stats.size <= 120 * 1024 * 1024) {
             const data = fs.readFileSync(fullPath);
             filesList.push({
               fileName: entry.name,
@@ -262,8 +262,9 @@ ipcMain.handle('dialog:openDicomFiles', async () => {
     title: 'Open DICOM Files or Folders',
     properties: ['openFile', 'multiSelections'],
     filters: [
-      { name: 'DICOM Files', extensions: ['dcm', 'ima', 'dicom', ''] },
-      { name: 'All Files', extensions: ['*'] }
+      { name: 'All Files / DICOM & ZIP (*.*)', extensions: ['*'] },
+      { name: 'DICOM Files (*.dcm, *.ima, *.dicom)', extensions: ['dcm', 'ima', 'dicom'] },
+      { name: 'ZIP Archives (*.zip)', extensions: ['zip'] }
     ]
   });
 
@@ -399,24 +400,26 @@ function findReadyOpticalDrive() {
       return;
     }
 
-    // 1. Try PowerShell Get-CimInstance Win32_CDROMDrive strictly checking MediaLoaded
-    exec('powershell -NoProfile -Command "Get-CimInstance Win32_CDROMDrive | Where-Object { $_.MediaLoaded -eq $true } | Select-Object Drive, Name, VolumeName | ConvertTo-Json"', { timeout: 3000 }, (err, stdout) => {
+    // Fast .NET DriveInfo detection: reliable without requiring CIM/WMI permissions
+    const cmd = 'powershell -NoProfile -Command "[System.IO.DriveInfo]::GetDrives() | Select-Object Name, DriveType, IsReady, VolumeLabel | ConvertTo-Json"';
+    exec(cmd, { timeout: 3500 }, (err, stdout) => {
       try {
         if (!err && stdout && stdout.trim()) {
           let data = JSON.parse(stdout.trim());
           if (!Array.isArray(data)) data = [data];
           for (const item of data) {
-            const drive = item.Drive || (item.DeviceID ? item.DeviceID.match(/([A-Z]:)/)?.[1] : null);
-            if (drive) {
-              const root = drive.endsWith('\\') ? drive : drive + '\\';
+            const isCd = item.DriveType === 5 || item.DriveType === 'CDRom';
+            const isReady = item.IsReady === true || item.IsReady === 'True';
+            if (isCd && isReady && item.Name) {
+              const root = item.Name.endsWith('\\') ? item.Name : item.Name + '\\';
               try {
                 if (fs.existsSync(root)) {
                   const files = fs.readdirSync(root);
                   if (files.length > 0) {
                     return resolve({
-                      driveLetter: drive.replace(/\\$/, ''),
-                      name: item.Name || 'CD/DVD Drive',
-                      volumeName: item.VolumeName || 'DICOM_DISC',
+                      driveLetter: item.Name.replace(/\\$/, ''),
+                      name: 'Optical CD/DVD Drive',
+                      volumeName: item.VolumeLabel || 'DICOM_DISC',
                       rootPath: root
                     });
                   }
@@ -427,57 +430,27 @@ function findReadyOpticalDrive() {
         }
       } catch (_) {}
 
-      // 2. Also check LogicalDisk for DriveType 5 (Compact Disc)
-      exec('powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \\"DriveType = 5\\" | Select-Object DeviceID, VolumeName | ConvertTo-Json"', { timeout: 2500 }, (err2, stdout2) => {
+      // Fallback: Check letters D..Z looking specifically for optical discs or DICOM media
+      for (let i = 68; i <= 90; i++) {
+        const letter = String.fromCharCode(i) + ':';
+        const root = letter + '\\';
         try {
-          if (!err2 && stdout2 && stdout2.trim()) {
-            let data = JSON.parse(stdout2.trim());
-            if (!Array.isArray(data)) data = [data];
-            for (const item of data) {
-              const drive = item.DeviceID;
-              if (drive) {
-                const root = drive.endsWith('\\') ? drive : drive + '\\';
-                try {
-                  if (fs.existsSync(root)) {
-                    const files = fs.readdirSync(root);
-                    if (files.length > 0) {
-                      return resolve({
-                        driveLetter: drive.replace(/\\$/, ''),
-                        name: 'Optical CD/DVD Drive',
-                        volumeName: item.VolumeName || 'DICOM_DISC',
-                        rootPath: root
-                      });
-                    }
-                  }
-                } catch (_) {}
-              }
+          if (fs.existsSync(root)) {
+            const hasDicomDir = fs.existsSync(path.join(root, 'DICOMDIR')) || fs.existsSync(path.join(root, 'dicomdir'));
+            const hasDicomFolder = fs.existsSync(path.join(root, 'DICOM')) || fs.existsSync(path.join(root, 'dicom'));
+            if (hasDicomDir || hasDicomFolder) {
+              return resolve({
+                driveLetter: letter,
+                name: 'DICOM Media Drive',
+                volumeName: 'DICOM_MEDIA',
+                rootPath: root
+              });
             }
           }
         } catch (_) {}
+      }
 
-        // 3. Fallback: Check letters D..Z ONLY if an actual DICOMDIR file or DICOM folder exists at root
-        // NEVER treat an ordinary drive as a disc just because files exist!
-        for (let i = 68; i <= 90; i++) {
-          const letter = String.fromCharCode(i) + ':';
-          const root = letter + '\\';
-          try {
-            if (fs.existsSync(root)) {
-              const hasDicomDir = fs.existsSync(path.join(root, 'DICOMDIR')) || fs.existsSync(path.join(root, 'dicomdir'));
-              const hasDicomFolder = fs.existsSync(path.join(root, 'DICOM')) || fs.existsSync(path.join(root, 'dicom'));
-              if (hasDicomDir || hasDicomFolder) {
-                return resolve({
-                  driveLetter: letter,
-                  name: 'DICOM Media Drive',
-                  volumeName: 'DICOM_MEDIA',
-                  rootPath: root
-                });
-              }
-            }
-          } catch (_) {}
-        }
-
-        resolve(null);
-      });
+      resolve(null);
     });
   });
 }
