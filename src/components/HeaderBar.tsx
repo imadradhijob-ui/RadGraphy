@@ -62,7 +62,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             Viewer
           </span>
           <span className="ml-1 px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/50 text-[10px] font-mono font-bold tracking-wider shadow-[0_0_8px_rgba(6,182,212,0.4)]">
-            v0.0.13
+            v1.0.0
           </span>
         </div>
 
