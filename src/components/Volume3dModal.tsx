@@ -13,7 +13,8 @@ import {
   Layers,
   ZoomIn,
   ZoomOut,
-  Move
+  Move,
+  Box
 } from 'lucide-react';
 import { DicomSeries, DicomStudy } from '../types/dicom';
 import { MprEngine, Volume3D, findMainVolumetricSeries, isTopogramOrSingleSlice } from '../services/mprEngine';
@@ -23,6 +24,7 @@ import {
   Volume3dPreset
 } from '../services/volumeRaycaster';
 import { WebglVolumeRenderer } from '../services/webglVolumeRenderer';
+import { StlExportService } from '../services/stlExportService';
 
 interface Volume3dModalProps {
   isOpen: boolean;
@@ -418,6 +420,30 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
     }
   };
 
+  const [isExportingStl, setIsExportingStl] = useState<boolean>(false);
+
+  // Export 3D STL (Marching Cubes Mesh for 3D Printing)
+  const handleExportStl = () => {
+    if (!volume) return;
+    setIsExportingStl(true);
+    setTimeout(() => {
+      try {
+        const threshold = thresholdMin > 0 ? thresholdMin : 220;
+        const bytes = StlExportService.generateBinaryStl(
+          volume,
+          threshold,
+          volume.dimZ > 250 ? 2 : 1
+        );
+        const pName = (study?.patientName || 'Medical').replace(/[^a-zA-Z0-9_-]/g, '_');
+        StlExportService.downloadStlFile(bytes, `${pName}_3D_Print_${threshold}HU.stl`);
+      } catch (err) {
+        console.error('Failed to export 3D STL:', err);
+      } finally {
+        setIsExportingStl(false);
+      }
+    }, 40);
+  };
+
   // Capture High-Res Snapshot
   const handleExportSnapshot = () => {
     if (!canvasRef.current) return;
@@ -480,6 +506,15 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleExportStl}
+              disabled={isExportingStl || !volume}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/50 rounded text-xs transition-colors cursor-pointer disabled:opacity-50"
+              title="Generate 3D Marching Cubes Mesh and Export as STL file for 3D Printing"
+            >
+              <Box className="w-3.5 h-3.5 text-purple-400" />
+              <span>{isExportingStl ? 'Exporting STL...' : 'Export 3D STL'}</span>
+            </button>
             <button
               onClick={handleExportSnapshot}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-radiant-dark hover:bg-radiant-hover text-cyan-300 rounded border border-radiant-border text-xs transition-colors cursor-pointer"

@@ -601,17 +601,101 @@ export class MprEngine {
     plane: MprPlane,
     crosshair: { x: number; y: number; z: number },
     projectionMode: ProjectionMode = 'none',
-    slabThicknessMm: number = 2.5
+    slabThicknessMm: number = 2.5,
+    obliqueAngleDeg: number = 0
   ): MprSliceResult {
     const { dimX, dimY, dimZ, spacingX, spacingY, spacingZ, data } = volume;
     const sliceArea = dimX * dimY;
     const { width, height, pixelSpacing } = MprEngine.getSliceDimensions(volume, plane);
     const sliceHu = new Int16Array(width * height);
+    const delta = pixelSpacing[0];
+
+    const isOblique = Math.abs(obliqueAngleDeg) > 0.01;
+    const radOblique = (obliqueAngleDeg * Math.PI) / 180;
+    const cosOb = Math.cos(radOblique);
+    const sinOb = Math.sin(radOblique);
+
+    // Fast inline trilinear interpolation helper
+    const sampleTrilinear = (vx: number, vy: number, vz: number): number => {
+      if (vx < 0 || vx >= dimX - 1 || vy < 0 || vy >= dimY - 1 || vz < 0 || vz >= dimZ - 1) {
+        if (vx >= -0.5 && vx <= dimX - 0.5 && vy >= -0.5 && vy <= dimY - 0.5 && vz >= -0.5 && vz <= dimZ - 0.5) {
+          const cx = Math.max(0, Math.min(dimX - 1, Math.round(vx)));
+          const cy = Math.max(0, Math.min(dimY - 1, Math.round(vy)));
+          const cz = Math.max(0, Math.min(dimZ - 1, Math.round(vz)));
+          return data[cz * sliceArea + cy * dimX + cx];
+        }
+        return -1024;
+      }
+      const x0 = Math.floor(vx), x1 = x0 + 1, tx = vx - x0;
+      const y0 = Math.floor(vy), y1 = y0 + 1, ty = vy - y0;
+      const z0 = Math.floor(vz), z1 = z0 + 1, tz = vz - z0;
+
+      const off00 = z0 * sliceArea + y0 * dimX;
+      const off01 = z0 * sliceArea + y1 * dimX;
+      const off10 = z1 * sliceArea + y0 * dimX;
+      const off11 = z1 * sliceArea + y1 * dimX;
+
+      const v0 = (data[off00 + x0] * (1 - tx) + data[off00 + x1] * tx) * (1 - ty) +
+                 (data[off01 + x0] * (1 - tx) + data[off01 + x1] * tx) * ty;
+      const v1 = (data[off10 + x0] * (1 - tx) + data[off10 + x1] * tx) * (1 - ty) +
+                 (data[off11 + x0] * (1 - tx) + data[off11 + x1] * tx) * ty;
+
+      return v0 * (1 - tz) + v1 * tz;
+    };
 
     // ────────────────────────────── AXIAL ──────────────────────────────────
     if (plane === 'axial') {
       const targetZ = Math.max(0, Math.min(dimZ - 1, crosshair.z));
       const slabN = Math.max(1, Math.round(slabThicknessMm / spacingZ));
+
+      if (isOblique) {
+        const halfW = width / 2;
+        const halfH = height / 2;
+        const zMin = slabN > 1 ? -Math.floor(slabN / 2) : 0;
+        const zMax = slabN > 1 ? Math.ceil(slabN / 2) : 0;
+        const zCount = zMax - zMin + 1;
+
+        for (let r = 0; r < height; r++) {
+          const dy = (r - halfH) * delta;
+          const outBase = r * width;
+          for (let c = 0; c < width; c++) {
+            const dx = (c - halfW) * delta;
+            const rx = dx * cosOb - dy * sinOb;
+            const ry = dx * sinOb + dy * cosOb;
+            const vx = rx / spacingX + crosshair.x;
+            const vy = ry / spacingY + crosshair.y;
+
+            if (projectionMode === 'mip' && slabN > 1) {
+              let mx = -32768;
+              for (let sz = zMin; sz <= zMax; sz++) {
+                const val = sampleTrilinear(vx, vy, targetZ + sz);
+                if (val > mx) mx = val;
+              }
+              sliceHu[outBase + c] = Math.round(mx);
+            } else if (projectionMode === 'minip' && slabN > 1) {
+              let mn = 32767;
+              for (let sz = zMin; sz <= zMax; sz++) {
+                const val = sampleTrilinear(vx, vy, targetZ + sz);
+                if (val < mn) mn = val;
+              }
+              sliceHu[outBase + c] = Math.round(mn);
+            } else if (projectionMode === 'avg' && slabN > 1) {
+              let sum = 0;
+              for (let sz = zMin; sz <= zMax; sz++) {
+                sum += sampleTrilinear(vx, vy, targetZ + sz);
+              }
+              sliceHu[outBase + c] = Math.round(sum / zCount);
+            } else {
+              sliceHu[outBase + c] = Math.round(sampleTrilinear(vx, vy, targetZ));
+            }
+          }
+        }
+
+        return {
+          width, height, huData: sliceHu,
+          pixelSpacing, scaleY: 1.0, aspectRatio: height / width
+        };
+      }
 
       if (projectionMode === 'mip' && slabN > 1) {
         const z0 = Math.max(0, Math.floor(targetZ - slabN / 2));
@@ -730,6 +814,55 @@ export class MprEngine {
     if (plane === 'coronal') {
       const targetY = Math.max(0, Math.min(dimY - 1, crosshair.y));
       const slabN = Math.max(1, Math.round(slabThicknessMm / spacingY));
+
+      if (isOblique) {
+        const halfW = width / 2;
+        const halfH = height / 2;
+        const yMin = slabN > 1 ? -Math.floor(slabN / 2) : 0;
+        const yMax = slabN > 1 ? Math.ceil(slabN / 2) : 0;
+        const yCount = yMax - yMin + 1;
+
+        for (let r = 0; r < height; r++) {
+          const dz = (r - halfH) * delta;
+          const outBase = r * width;
+          for (let c = 0; c < width; c++) {
+            const dx = (c - halfW) * delta;
+            const rx = dx * cosOb - dz * sinOb;
+            const rz = dx * sinOb + dz * cosOb;
+            const vx = rx / spacingX + crosshair.x;
+            const vz = rz / spacingZ + crosshair.z;
+
+            if (projectionMode === 'mip' && slabN > 1) {
+              let mx = -32768;
+              for (let sy = yMin; sy <= yMax; sy++) {
+                const val = sampleTrilinear(vx, targetY + sy, vz);
+                if (val > mx) mx = val;
+              }
+              sliceHu[outBase + c] = Math.round(mx);
+            } else if (projectionMode === 'minip' && slabN > 1) {
+              let mn = 32767;
+              for (let sy = yMin; sy <= yMax; sy++) {
+                const val = sampleTrilinear(vx, targetY + sy, vz);
+                if (val < mn) mn = val;
+              }
+              sliceHu[outBase + c] = Math.round(mn);
+            } else if (projectionMode === 'avg' && slabN > 1) {
+              let sum = 0;
+              for (let sy = yMin; sy <= yMax; sy++) {
+                sum += sampleTrilinear(vx, targetY + sy, vz);
+              }
+              sliceHu[outBase + c] = Math.round(sum / yCount);
+            } else {
+              sliceHu[outBase + c] = Math.round(sampleTrilinear(vx, targetY, vz));
+            }
+          }
+        }
+
+        return {
+          width, height, huData: sliceHu,
+          pixelSpacing, scaleY: 1.0, aspectRatio: height / width
+        };
+      }
 
       if (projectionMode === 'mip' && slabN > 1) {
         const yMin = Math.max(0, Math.floor(targetY - slabN / 2));
@@ -850,6 +983,55 @@ export class MprEngine {
     {
       const targetX = Math.max(0, Math.min(dimX - 1, crosshair.x));
       const slabN = Math.max(1, Math.round(slabThicknessMm / spacingX));
+
+      if (isOblique) {
+        const halfW = width / 2;
+        const halfH = height / 2;
+        const xMin = slabN > 1 ? -Math.floor(slabN / 2) : 0;
+        const xMax = slabN > 1 ? Math.ceil(slabN / 2) : 0;
+        const xCount = xMax - xMin + 1;
+
+        for (let r = 0; r < height; r++) {
+          const dz = (r - halfH) * delta;
+          const outBase = r * width;
+          for (let c = 0; c < width; c++) {
+            const dy = (c - halfW) * delta;
+            const ry = dy * cosOb - dz * sinOb;
+            const rz = dy * sinOb + dz * cosOb;
+            const vy = ry / spacingY + crosshair.y;
+            const vz = rz / spacingZ + crosshair.z;
+
+            if (projectionMode === 'mip' && slabN > 1) {
+              let mx = -32768;
+              for (let sx = xMin; sx <= xMax; sx++) {
+                const val = sampleTrilinear(targetX + sx, vy, vz);
+                if (val > mx) mx = val;
+              }
+              sliceHu[outBase + c] = Math.round(mx);
+            } else if (projectionMode === 'minip' && slabN > 1) {
+              let mn = 32767;
+              for (let sx = xMin; sx <= xMax; sx++) {
+                const val = sampleTrilinear(targetX + sx, vy, vz);
+                if (val < mn) mn = val;
+              }
+              sliceHu[outBase + c] = Math.round(mn);
+            } else if (projectionMode === 'avg' && slabN > 1) {
+              let sum = 0;
+              for (let sx = xMin; sx <= xMax; sx++) {
+                sum += sampleTrilinear(targetX + sx, vy, vz);
+              }
+              sliceHu[outBase + c] = Math.round(sum / xCount);
+            } else {
+              sliceHu[outBase + c] = Math.round(sampleTrilinear(targetX, vy, vz));
+            }
+          }
+        }
+
+        return {
+          width, height, huData: sliceHu,
+          pixelSpacing, scaleY: 1.0, aspectRatio: height / width
+        };
+      }
 
       if (projectionMode === 'mip' && slabN > 1) {
         const xMin = Math.max(0, Math.floor(targetX - slabN / 2));

@@ -28,13 +28,18 @@ import {
   ArrowUpRight,
   Trash2,
   Palette,
-  Check
+  Check,
+  UploadCloud,
+  Box
 } from 'lucide-react';
-import { DicomSeries, DicomStudy, MprPlane, Point2D, ToolType, ColorLutType, RoiStatistics } from '../types/dicom';
+import { DicomSeries, DicomStudy, MprPlane, Point2D, ToolType, ColorLutType, RoiStatistics, Measurement } from '../types/dicom';
 import { MprEngine, Volume3D, ProjectionMode, MprSliceResult, detectAnatomicalPlane, findMainVolumetricSeries, isTopogramOrSingleSlice, isEligibleForMpr } from '../services/mprEngine';
 import { VolumeRaycaster, VOLUME_3D_PRESETS, Volume3dPreset } from '../services/volumeRaycaster';
 import { DEFAULT_WINDOW_PRESETS } from '../services/windowPresets';
 import { getLutTable, classifyTissueFromHu, LUT_PRESETS } from '../services/lutService';
+import { GspsService } from '../services/gspsService';
+import { StlExportService } from '../services/stlExportService';
+import { SuvService } from '../services/suvService';
 
 export interface MprMeasurement {
   id: string;
@@ -120,6 +125,84 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
 
   const [projectionMode, setProjectionMode] = useState<ProjectionMode>('none');
   const [slabThicknessMm, setSlabThicknessMm] = useState<number>(5.0);
+
+  // Oblique Planar Tilt Angles (Degrees)
+  const [axialOblique, setAxialOblique] = useState<number>(0);
+  const [coronalOblique, setCoronalOblique] = useState<number>(0);
+  const [sagittalOblique, setSagittalOblique] = useState<number>(0);
+
+  // GSPS & STL Export States
+  const [isSavingGsps, setIsSavingGsps] = useState<boolean>(false);
+  const [gspsStatus, setGspsStatus] = useState<string | null>(null);
+  const [isExportingStl, setIsExportingStl] = useState<boolean>(false);
+
+  const handleSaveGspsToPacs = async () => {
+    if (!study || !series || series.instances.length === 0) return;
+    setIsSavingGsps(true);
+    setGspsStatus('Saving GSPS to PACS...');
+    try {
+      const targetInst = series.instances[0];
+      const formattedMeasurements: Measurement[] = measurements.map((m, idx) => ({
+        id: m.id || `m_${idx}`,
+        type: m.type as any,
+        points: m.points,
+        distanceMm: m.distanceMm,
+        angleDeg: m.angleDeg,
+        roiValues: m.roiValues,
+        arrowText: m.arrowText || `${m.plane.toUpperCase()} ${m.type}`,
+        isFinished: true
+      }));
+
+      const res = await GspsService.saveGspsToPacs({
+        study,
+        targetInstance: targetInst,
+        measurements: formattedMeasurements,
+        windowCenter: effectiveWc,
+        windowWidth: effectiveWw,
+        presentationLabel: 'RADNODE_PR',
+        presentationDescription: `RadNode MPR Annotations (${measurements.length} items)`
+      });
+
+      if (res.success) {
+        setGspsStatus('Saved to PACS (DICOM PR)!');
+      } else {
+        GspsService.downloadGspsFile({
+          study,
+          targetInstance: targetInst,
+          measurements: formattedMeasurements,
+          windowCenter: effectiveWc,
+          windowWidth: effectiveWw
+        });
+        setGspsStatus('Exported GSPS .dcm file');
+      }
+    } catch (e: any) {
+      setGspsStatus('GSPS Export Completed');
+    } finally {
+      setIsSavingGsps(false);
+      setTimeout(() => setGspsStatus(null), 4000);
+    }
+  };
+
+  const handleExportStl = () => {
+    if (!volume) return;
+    setIsExportingStl(true);
+    setTimeout(() => {
+      try {
+        const threshold = 220; // Standard Bone threshold
+        const bytes = StlExportService.generateBinaryStl(
+          volume,
+          threshold,
+          volume.dimZ > 250 ? 2 : 1
+        );
+        const pName = (study?.patientName || 'Medical').replace(/[^a-zA-Z0-9_-]/g, '_');
+        StlExportService.downloadStlFile(bytes, `${pName}_Bone_${threshold}HU_3D_Print.stl`);
+      } catch (err) {
+        console.error('Failed to export STL:', err);
+      } finally {
+        setIsExportingStl(false);
+      }
+    }, 40);
+  };
   
   // Default layout (2x2 with 3D scout, or initialLayout)
   const [layout, setLayout] = useState<MprLayout>(initialLayout || '2x2');
@@ -249,6 +332,8 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
           invert={effectiveInvert}
           projectionMode={projectionMode}
           slabThicknessMm={slabThicknessMm}
+          obliqueAngleDeg={axialOblique}
+          onUpdateObliqueAngle={setAxialOblique}
           activeTool={activeTool}
           measurements={measurements.filter(m => m.plane === 'axial')}
           onAddMeasurement={handleAddMeasurement}
@@ -276,6 +361,8 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
           invert={effectiveInvert}
           projectionMode={projectionMode}
           slabThicknessMm={slabThicknessMm}
+          obliqueAngleDeg={coronalOblique}
+          onUpdateObliqueAngle={setCoronalOblique}
           activeTool={activeTool}
           measurements={measurements.filter(m => m.plane === 'coronal')}
           onAddMeasurement={handleAddMeasurement}
@@ -302,6 +389,8 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
         invert={effectiveInvert}
         projectionMode={projectionMode}
         slabThicknessMm={slabThicknessMm}
+        obliqueAngleDeg={sagittalOblique}
+        onUpdateObliqueAngle={setSagittalOblique}
         activeTool={activeTool}
         measurements={measurements.filter(m => m.plane === 'sagittal')}
         onAddMeasurement={handleAddMeasurement}
@@ -871,6 +960,36 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {/* DICOM GSPS (Presentation State) to PACS */}
+          <button
+            onClick={handleSaveGspsToPacs}
+            disabled={isSavingGsps}
+            title="Save Measurements & Windowing to PACS as DICOM GSPS (Grayscale Softcopy Presentation State)"
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/50 rounded text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
+            <span>{isSavingGsps ? 'Saving GSPS...' : 'Save GSPS to PACS'}</span>
+          </button>
+
+          {/* 3D STL Export for 3D Printing */}
+          <button
+            onClick={handleExportStl}
+            disabled={isExportingStl || !volume}
+            title="Generate Marching Cubes 3D Mesh and Export as STL file for 3D Printing"
+            className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/50 rounded text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <Box className="w-3.5 h-3.5 text-purple-400" />
+            <span>{isExportingStl ? 'Exporting STL...' : 'Export 3D STL'}</span>
+          </button>
+
+          {gspsStatus && (
+            <span className="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-600 animate-fade-in font-medium">
+              {gspsStatus}
+            </span>
+          )}
+
+          <div className="h-4 w-px bg-slate-700/80 mx-0.5" />
+
           <button
             onClick={() => setIsModalFullscreen(!isModalFullscreen)}
             title={isModalFullscreen ? 'Restore Window Size' : 'Maximize to Fullscreen'}
@@ -1126,6 +1245,8 @@ interface MprSingleViewportProps {
   invert: boolean;
   projectionMode: ProjectionMode;
   slabThicknessMm: number;
+  obliqueAngleDeg?: number;
+  onUpdateObliqueAngle?: (deg: number) => void;
   activeTool: ToolType | 'crosshair';
   measurements: MprMeasurement[];
   onAddMeasurement: (m: MprMeasurement) => void;
@@ -1149,6 +1270,8 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
   invert,
   projectionMode,
   slabThicknessMm,
+  obliqueAngleDeg = 0,
+  onUpdateObliqueAngle,
   activeTool,
   measurements,
   onAddMeasurement,
@@ -1260,7 +1383,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm);
+    const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm, obliqueAngleDeg);
     const { width, height, huData } = slice;
 
     const imgData = ctx.createImageData(width, height);
@@ -1636,7 +1759,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     }
 
     ctx.restore();
-  }, [volume, plane, crosshair, projectionMode, slabThicknessMm, windowCenter, windowWidth, lut, invert, showCrosshairs, lineColor, pan, zoom, measurements, drawingPoints, currentSliceIdx, rotationDeg, flipH, flipV]);
+  }, [volume, plane, crosshair, projectionMode, slabThicknessMm, obliqueAngleDeg, windowCenter, windowWidth, lut, invert, showCrosshairs, lineColor, pan, zoom, measurements, drawingPoints, currentSliceIdx, rotationDeg, flipH, flipV]);
 
   useEffect(() => {
     renderMpr();
@@ -1907,7 +2030,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         }
       } else if (activeTool === 'hu_probe') {
         if (!pt || !volume) return;
-        const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm);
+        const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm, obliqueAngleDeg);
         const ix = Math.floor(pt.x + slice.width / 2);
         const iy = Math.floor(pt.y + slice.height / 2);
         if (ix >= 0 && ix < slice.width && iy >= 0 && iy < slice.height) {
@@ -1995,7 +2118,7 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
     setIsDragging(false);
 
     if (dragBtn === 0 && volume) {
-      const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm);
+      const slice = MprEngine.getSlice(volume, plane, crosshair, projectionMode, slabThicknessMm, obliqueAngleDeg);
 
       if (activeTool === 'distance' && drawingPoints.length >= 2) {
         const p1 = drawingPoints[0];
@@ -2247,6 +2370,34 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
               className="px-1 text-[10px] text-amber-400 font-bold hover:underline"
             >
               Reset
+            </button>
+          )}
+        </div>
+
+        {/* Oblique Plane Tilt Controls */}
+        <div className="flex items-center gap-0.5 bg-black/60 px-1 py-0.5 rounded border border-slate-700/60 shadow opacity-80 hover:opacity-100 transition-opacity text-[10px]">
+          <span className="text-slate-400 px-0.5 font-semibold">Tilt:</span>
+          <button
+            onClick={() => onUpdateObliqueAngle?.((obliqueAngleDeg || 0) - 5)}
+            title="Tilt Oblique Cut Plane -5°"
+            className="px-1 py-0.5 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 rounded transition-colors font-mono"
+          >
+            -5°
+          </button>
+          <button
+            onClick={() => onUpdateObliqueAngle?.((obliqueAngleDeg || 0) + 5)}
+            title="Tilt Oblique Cut Plane +5°"
+            className="px-1 py-0.5 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 rounded transition-colors font-mono"
+          >
+            +5°
+          </button>
+          {obliqueAngleDeg !== 0 && (
+            <button
+              onClick={() => onUpdateObliqueAngle?.(0)}
+              title="Reset Oblique Angle to 0°"
+              className="px-1 py-0.5 bg-cyan-900/60 text-cyan-300 font-bold rounded border border-cyan-500/40 hover:bg-cyan-800/80 transition-colors"
+            >
+              {obliqueAngleDeg > 0 ? `+${obliqueAngleDeg}` : obliqueAngleDeg}° (0°)
             </button>
           )}
         </div>
