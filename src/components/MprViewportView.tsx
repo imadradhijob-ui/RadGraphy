@@ -497,7 +497,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex items-center gap-1 min-w-0 flex-shrink justify-center">
           {/* 1. Core 4 Navigation Tools */}
           <div className="flex items-center bg-radiant-darkest rounded-lg border border-radiant-border p-0.5 shadow-inner">
             <button
@@ -762,7 +762,7 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
               className="flex items-center gap-1 px-2.5 py-1 bg-radiant-darkest hover:bg-radiant-hover text-slate-300 rounded border border-radiant-border text-[11px]"
             >
               <SunMedium className="w-3.5 h-3.5 text-amber-400" />
-              <span>WL: {effectiveWc} WW: {effectiveWw}</span>
+              <span className="font-mono text-[10.5px]">W:{effectiveWc}/{effectiveWw}</span>
               <ChevronDown className="w-3 h-3 text-slate-400" />
             </button>
             {showPresetsMenu && (
@@ -916,9 +916,9 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
             )}
           </div>
 
-          {/* 3D MPR 2x2 (with 3D) vs 1x3 (3 Series only) quick switcher */}
+          {/* 3D MPR 2x2 (with 3D) vs 1x3 (3 Series only) quick switcher (hidden on compact screens to prevent overflow) */}
           {(layout === '2x2' || layout === '3-view') && (
-            <div className="flex items-center bg-radiant-darkest rounded-lg border border-radiant-border p-0.5">
+            <div className="hidden xl:flex items-center bg-radiant-darkest rounded-lg border border-radiant-border p-0.5">
               <button
                 onClick={() => {
                   setLayout('2x2');
@@ -931,11 +931,11 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                   }
                 }}
                 title="2x2: 3D Volume display with 3 Orthogonal Views (Axial, Coronal, Sagittal)"
-                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
+                className={`px-2 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
                   layout === '2x2' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <span>2×2 (3D)</span>
+                <span>2×2</span>
               </button>
               <button
                 onClick={() => {
@@ -949,26 +949,27 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
                   }
                 }}
                 title="1x3: Tri-View display with 3 Orthogonal Views (Sagittal, Coronal, Axial)"
-                className={`px-2.5 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
+                className={`px-2 py-1 rounded text-[11px] font-bold transition-all flex items-center gap-1 ${
                   layout === '3-view' ? 'bg-cyan-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                <span>1×3 (3 Series)</span>
+                <span>1×3</span>
               </button>
             </div>
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        {/* Right Section: Exports, Status, Maximize & Close Button (Always visible with ml-auto) */}
+        <div className="flex items-center gap-1.5 flex-shrink-0 ml-auto z-10">
           {/* DICOM GSPS (Presentation State) to PACS */}
           <button
             onClick={handleSaveGspsToPacs}
             disabled={isSavingGsps}
             title="Save Measurements & Windowing to PACS as DICOM GSPS (Grayscale Softcopy Presentation State)"
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/50 rounded text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+            className="flex items-center gap-1 px-2 py-1 bg-emerald-950/70 hover:bg-emerald-900 text-emerald-300 border border-emerald-500/50 rounded text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer flex-shrink-0"
           >
             <UploadCloud className="w-3.5 h-3.5 text-emerald-400" />
-            <span>{isSavingGsps ? 'Saving GSPS...' : 'Save GSPS to PACS'}</span>
+            <span className="hidden sm:inline">{isSavingGsps ? 'Saving...' : 'GSPS'}</span>
           </button>
 
           {/* 3D STL Export for 3D Printing */}
@@ -976,30 +977,34 @@ export const MprViewportView: React.FC<MprViewportViewProps> = ({
             onClick={handleExportStl}
             disabled={isExportingStl || !volume}
             title="Generate Marching Cubes 3D Mesh and Export as STL file for 3D Printing"
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/50 rounded text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+            className="flex items-center gap-1 px-2 py-1 bg-purple-950/70 hover:bg-purple-900 text-purple-300 border border-purple-500/50 rounded text-[11px] font-semibold transition-colors disabled:opacity-50 cursor-pointer flex-shrink-0"
           >
             <Box className="w-3.5 h-3.5 text-purple-400" />
-            <span>{isExportingStl ? 'Exporting STL...' : 'Export 3D STL'}</span>
+            <span className="hidden sm:inline">{isExportingStl ? 'Exporting...' : '3D STL'}</span>
           </button>
 
           {gspsStatus && (
-            <span className="text-[11px] px-2 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-600 animate-fade-in font-medium">
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-600 animate-fade-in font-medium max-w-[130px] truncate hidden sm:inline">
               {gspsStatus}
             </span>
           )}
 
-          <div className="h-4 w-px bg-slate-700/80 mx-0.5" />
+          <div className="h-4 w-px bg-slate-700/80 mx-0.5 hidden sm:block" />
 
+          {/* Modal Fullscreen Toggle */}
           <button
             onClick={() => setIsModalFullscreen(!isModalFullscreen)}
             title={isModalFullscreen ? 'Restore Window Size' : 'Maximize to Fullscreen'}
-            className="p-1.5 bg-radiant-darkest hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border text-xs flex items-center gap-1 transition-colors cursor-pointer"
+            className="p-1.5 bg-radiant-darkest hover:bg-radiant-hover text-slate-300 hover:text-cyan-300 rounded border border-radiant-border text-xs flex items-center gap-1 transition-colors cursor-pointer flex-shrink-0"
           >
             {isModalFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
           </button>
+
+          {/* Close Modal Button (Always prominent & accessible) */}
           <button
             onClick={onClose}
-            className="flex items-center gap-1 px-3 py-1 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/40 rounded transition-colors font-bold text-xs cursor-pointer"
+            title="Close MPR Viewport (Escape)"
+            className="flex items-center gap-1.5 px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white border border-rose-500 rounded transition-colors font-bold text-xs cursor-pointer shadow-md flex-shrink-0"
           >
             <X className="w-4 h-4" />
             <span>Close</span>
@@ -2433,8 +2438,8 @@ const MprSingleViewport: React.FC<MprSingleViewportProps> = ({
         )}
         <button
           onClick={onToggleMaximize}
-          className="p-1 bg-radiant-panel/80 hover:bg-radiant-hover text-slate-300 rounded border border-radiant-border opacity-0 group-hover:opacity-100 transition-opacity"
-          title={isMaximized ? 'Restore View' : 'Maximize'}
+          className="p-1.5 bg-black/60 hover:bg-cyan-900/60 text-slate-300 hover:text-cyan-300 rounded border border-slate-700/60 opacity-80 hover:opacity-100 transition-opacity cursor-pointer shadow"
+          title={isMaximized ? 'Restore View (Double Click)' : 'Maximize Viewport'}
         >
           {isMaximized ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
         </button>
