@@ -83,7 +83,7 @@ if (!gotTheLock) {
 }
 
 // Log application session start
-writeToLog('SESSION_START', `RadNode Viewer v0.0.11 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
+writeToLog('SESSION_START', `RadNode Viewer v0.0.13 started. Node: ${process.version}, Electron: ${process.versions.electron}, OS: ${process.platform} ${process.arch}, LogPath: ${logFilePath}`);
 
 // Process-level crash prevention
 process.on('uncaughtException', (err) => {
