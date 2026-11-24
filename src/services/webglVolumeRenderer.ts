@@ -10,10 +10,13 @@ export interface WebglRenderOptions {
   preset: Volume3dPreset;
   thresholdMin: number;
   thresholdMax: number;
-  clipPlaneZ: number;
+  clipMin?: [number, number, number]; // [xMin, yMin, zMin] in range 0.0 to 1.0
+  clipMax?: [number, number, number]; // [xMax, yMax, zMax] in range 0.0 to 1.0
+  clipPlaneZ?: number; // legacy backwards compatibility
   enableAmbientOcclusion: boolean;
   specularPower?: number;
   specularIntensity?: number;
+  gamma?: number; // default 2.2 for calibrated medical sRGB
   quality: 'fast' | 'high' | 'ultra';
 }
 
@@ -47,9 +50,22 @@ uniform float u_thresholdMin;
 uniform float u_thresholdMax;
 uniform float u_huMin;
 uniform float u_huMax;
-uniform float u_clipPlaneZ;
 
-uniform int u_presetId; // 0: bone, 1: angio, 2: skin, 3: dental, 4: mip3d, 5: cinematic_bone
+// 6-axis 3D crop bounds [0..1]
+uniform vec3 u_clipMin;
+uniform vec3 u_clipMax;
+
+// Preset ID:
+// 0: RadiAnt Bone & Skeleton (Ivory & Gold)
+// 1: RadiAnt Bone + Soft Tissue (Composite Skin)
+// 2: RadiAnt CT Angiography (Vascular Contrast)
+// 3: RadiAnt Skin & Facial Anatomy
+// 4: RadiAnt 3D MIP
+// 5: RadiAnt Dental & Maxillofacial
+// 6: RadiAnt Pulmonary & Airway
+// 7: RadiAnt Brain & Parenchyma (Neuro)
+// 8: Cinematic Skull & Bone Ultra-HD
+uniform int u_presetId;
 uniform vec3 u_baseColor;
 uniform float u_ambient;
 uniform float u_diffuse;
@@ -59,6 +75,7 @@ uniform float u_opacityMultiplier;
 uniform bool u_enableAO;
 uniform int u_maxSteps;
 uniform float u_stepSize;
+uniform float u_gamma;
 
 // Ray - Box Intersection (AABB) with zero-division protection
 bool intersectBox(vec3 rayOrig, vec3 rayDir, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
@@ -77,19 +94,20 @@ bool intersectBox(vec3 rayOrig, vec3 rayDir, vec3 boxMin, vec3 boxMax, out float
   return tFar > max(tNear, 0.0);
 }
 
-// Gradient normal estimation via finite differences
+// Spacing-Corrected Surface Normal Estimation
 vec3 estimateNormal(vec3 texCoord) {
   vec3 delta = 1.0 / u_volumeDim;
   float dx = texture(u_volume, texCoord + vec3(delta.x, 0.0, 0.0)).r - texture(u_volume, texCoord - vec3(delta.x, 0.0, 0.0)).r;
   float dy = texture(u_volume, texCoord + vec3(0.0, delta.y, 0.0)).r - texture(u_volume, texCoord - vec3(0.0, delta.y, 0.0)).r;
   float dz = texture(u_volume, texCoord + vec3(0.0, 0.0, delta.z)).r - texture(u_volume, texCoord - vec3(0.0, 0.0, delta.z)).r;
-  vec3 n = vec3(dx, dy, dz);
+  
+  // Scale gradient by physical aspect ratio to calculate true physical normal
+  vec3 n = vec3(dx / u_boxSize.x, dy / u_boxSize.y, dz / u_boxSize.z);
   float len = length(n);
   return len > 1e-4 ? n / len : vec3(0.0, 0.0, 1.0);
 }
 
 void main() {
-  // Screen & viewport setup: Volume box (unit 1.0) fills ~82% of viewport height by default
   float minDim = min(u_resolution.x, u_resolution.y);
   vec2 pixelPos = (v_uv - 0.5) * u_resolution;
   vec2 pannedPixel = pixelPos - u_pan;
@@ -105,30 +123,31 @@ void main() {
   vec3 rayOrigin = u_rotMatrix * rayOriginCam;
   vec3 rayDir = normalize(u_rotMatrix * rayDirCam);
 
-  vec3 boxMin = -u_boxSize * 0.5;
-  vec3 boxMax = u_boxSize * 0.5;
-
-  // Apply Clipping Plane on Z
-  boxMax.z = mix(boxMin.z, boxMax.z, u_clipPlaneZ);
+  // 6-Axis Bounding Box Clipping
+  vec3 rawBoxMin = -u_boxSize * 0.5;
+  vec3 rawBoxMax = u_boxSize * 0.5;
+  vec3 effBoxMin = mix(rawBoxMin, rawBoxMax, clamp(u_clipMin, 0.0, 1.0));
+  vec3 effBoxMax = mix(rawBoxMin, rawBoxMax, clamp(u_clipMax, 0.0, 1.0));
 
   float tNear, tFar;
-  if (!intersectBox(rayOrigin, rayDir, boxMin, boxMax, tNear, tFar)) {
+  if (!intersectBox(rayOrigin, rayDir, effBoxMin, effBoxMax, tNear, tFar)) {
     // Subtle medical background gradient vignette
     float r = length(v_uv - 0.5);
-    vec3 bg = mix(vec3(0.05, 0.07, 0.10), vec3(0.01, 0.01, 0.02), r * 1.4);
+    vec3 bg = mix(vec3(0.04, 0.06, 0.09), vec3(0.01, 0.01, 0.015), r * 1.4);
     fragColor = vec4(bg, 1.0);
     return;
   }
 
-  // Raymarching variables
-  vec3 p = rayOrigin + rayDir * tNear;
-  float t = tNear;
+  // Stochastic Ray Jittering to completely eradicate woodgrain slicing rings
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
   float dt = u_stepSize;
+  float t = tNear + jitter * dt;
+  vec3 p = rayOrigin + rayDir * t;
 
   vec4 accum = vec4(0.0);
   float maxMipVal = 0.0;
 
-  // Studio Lighting Directions (Fixed in camera space, transformed to volume space)
+  // Studio 3-Point Lighting Directions
   vec3 keyLight = normalize(u_rotMatrix * vec3(0.55, 0.65, -0.52));
   vec3 fillLight = normalize(u_rotMatrix * vec3(-0.60, -0.30, -0.73));
   vec3 rimLight = normalize(u_rotMatrix * vec3(0.00, 0.80, 0.60));
@@ -137,7 +156,7 @@ void main() {
   float tfRange = max(1.0, u_thresholdMax - u_thresholdMin);
 
   for (int i = 0; i < u_maxSteps; ++i) {
-    if (t > tFar || accum.a >= 0.98) break;
+    if (t > tFar || accum.a >= 0.985) break;
 
     // Convert world position p into 3D texture coordinate [0..1]
     vec3 texCoord = (p + u_boxSize * 0.5) / u_boxSize;
@@ -146,20 +165,150 @@ void main() {
       float normVal = texture(u_volume, texCoord).r;
       float hu = normVal * huRange + u_huMin;
 
-      if (u_presetId == 4) { // MIP Mode
+      if (u_presetId == 4) { // 3D MIP Mode
         if (normVal > maxMipVal) maxMipVal = normVal;
-      } else if (hu >= u_thresholdMin) {
-        // Smoothstep S-Curve Opacity
-        float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
-        float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
-        float alphaSample = sCurve * u_opacityMultiplier * dt * 80.0;
+      } else {
+        float alphaSample = 0.0;
+        vec3 sampleColor = u_baseColor;
+        float localSpecPower = u_specularPower;
+        float localSpecIntensity = u_specularIntensity;
+
+        if (u_presetId == 0) {
+          // 0: RadiAnt Bone & Skeleton (Ivory & Gold)
+          if (hu >= u_thresholdMin) {
+            float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
+            float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
+            alphaSample = sCurve * u_opacityMultiplier * dt * 90.0;
+
+            vec3 deepGold = vec3(0.85, 0.63, 0.40);
+            vec3 midIvory = vec3(0.96, 0.93, 0.88);
+            vec3 denseEnamel = vec3(0.99, 0.98, 0.96);
+            float boneFactor = clamp((hu - u_thresholdMin) / 500.0, 0.0, 1.0);
+            sampleColor = mix(deepGold, midIvory, boneFactor);
+            if (hu > 800.0) {
+              sampleColor = mix(sampleColor, denseEnamel, clamp((hu - 800.0) / 400.0, 0.0, 1.0));
+            }
+            localSpecPower = 48.0;
+            localSpecIntensity = 0.80;
+          }
+        } else if (u_presetId == 1) {
+          // 1: RadiAnt Bone + Soft Tissue (Composite Skin)
+          if (hu >= -250.0) {
+            if (hu < 120.0) {
+              float stRaw = clamp((hu - (-250.0)) / 370.0, 0.0, 1.0);
+              alphaSample = stRaw * stRaw * 0.08 * u_opacityMultiplier * dt * 80.0;
+              sampleColor = vec3(0.88, 0.62, 0.52);
+              localSpecPower = 18.0;
+              localSpecIntensity = 0.35;
+            } else if (hu < 240.0) {
+              float mRaw = clamp((hu - 120.0) / 120.0, 0.0, 1.0);
+              alphaSample = (0.05 + mRaw * 0.18) * u_opacityMultiplier * dt * 80.0;
+              sampleColor = vec3(0.78, 0.42, 0.36);
+              localSpecPower = 24.0;
+              localSpecIntensity = 0.45;
+            } else {
+              float bRaw = clamp((hu - 240.0) / tfRange, 0.0, 1.0);
+              float sCurve = bRaw * bRaw * (3.0 - 2.0 * bRaw);
+              alphaSample = (0.35 + sCurve * 0.65) * u_opacityMultiplier * dt * 95.0;
+              sampleColor = vec3(0.96, 0.93, 0.87);
+              localSpecPower = 56.0;
+              localSpecIntensity = 0.80;
+            }
+          }
+        } else if (u_presetId == 2) {
+          // 2: RadiAnt CT Angiography (Vascular Contrast)
+          if (hu >= u_thresholdMin) {
+            if (hu > 260.0) {
+              float bRaw = clamp((hu - 260.0) / 600.0, 0.0, 1.0);
+              alphaSample = (0.15 + bRaw * 0.35) * u_opacityMultiplier * dt * 80.0;
+              sampleColor = vec3(0.86, 0.87, 0.89); // Semi-transparent skeleton
+              localSpecPower = 32.0;
+              localSpecIntensity = 0.50;
+            } else {
+              float aRaw = clamp((hu - u_thresholdMin) / (260.0 - u_thresholdMin), 0.0, 1.0);
+              float sCurve = aRaw * aRaw * (3.0 - 2.0 * aRaw);
+              alphaSample = sCurve * 0.95 * u_opacityMultiplier * dt * 105.0;
+              sampleColor = vec3(0.96, 0.14, 0.18); // Arterial crimson
+              localSpecPower = 48.0;
+              localSpecIntensity = 0.85;
+            }
+          }
+        } else if (u_presetId == 3) {
+          // 3: RadiAnt Skin & Facial Anatomy
+          if (hu >= u_thresholdMin) {
+            float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
+            float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
+            alphaSample = sCurve * u_opacityMultiplier * dt * 85.0;
+            sampleColor = mix(vec3(0.85, 0.60, 0.48), vec3(0.94, 0.76, 0.66), tRaw);
+            localSpecPower = 18.0;
+            localSpecIntensity = 0.35;
+          }
+        } else if (u_presetId == 5) {
+          // 5: RadiAnt Dental & Maxillofacial
+          if (hu >= u_thresholdMin) {
+            float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
+            float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
+            alphaSample = sCurve * u_opacityMultiplier * dt * 90.0;
+            if (hu > 900.0) {
+              sampleColor = vec3(0.99, 0.98, 0.95); // Enamel
+              localSpecPower = 80.0;
+              localSpecIntensity = 0.95;
+            } else {
+              sampleColor = vec3(0.94, 0.90, 0.84);
+              localSpecPower = 40.0;
+              localSpecIntensity = 0.65;
+            }
+          }
+        } else if (u_presetId == 6) {
+          // 6: RadiAnt Pulmonary & Airway (Trachea & Lungs)
+          if (hu >= -950.0 && hu <= -200.0) {
+            float airRaw = clamp((-200.0 - hu) / 750.0, 0.0, 1.0);
+            alphaSample = airRaw * airRaw * u_opacityMultiplier * dt * 75.0;
+            if (hu > -550.0) {
+              sampleColor = vec3(0.20, 0.85, 0.96); // Trachea / Bronchi
+              localSpecPower = 36.0;
+              localSpecIntensity = 0.70;
+            } else {
+              sampleColor = vec3(0.35, 0.25, 0.65); // Parenchyma
+              localSpecPower = 12.0;
+              localSpecIntensity = 0.20;
+            }
+          }
+        } else if (u_presetId == 7) {
+          // 7: RadiAnt Brain & Parenchyma (Neuro)
+          if (hu >= u_thresholdMin) {
+            float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
+            float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
+            alphaSample = sCurve * u_opacityMultiplier * dt * 85.0;
+            sampleColor = mix(vec3(0.92, 0.78, 0.72), vec3(0.96, 0.88, 0.84), tRaw);
+            localSpecPower = 22.0;
+            localSpecIntensity = 0.40;
+          }
+        } else if (u_presetId == 8) {
+          // 8: Cinematic Skull & Bone Ultra-HD
+          if (hu >= u_thresholdMin) {
+            float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
+            float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
+            alphaSample = sCurve * u_opacityMultiplier * dt * 92.0;
+            sampleColor = mix(vec3(0.92, 0.88, 0.82), vec3(0.98, 0.96, 0.94), tRaw);
+            localSpecPower = 64.0;
+            localSpecIntensity = 0.90;
+          }
+        } else {
+          // Generic threshold
+          if (hu >= u_thresholdMin) {
+            float tRaw = clamp((hu - u_thresholdMin) / tfRange, 0.0, 1.0);
+            float sCurve = tRaw * tRaw * (3.0 - 2.0 * tRaw);
+            alphaSample = sCurve * u_opacityMultiplier * dt * 90.0;
+            sampleColor = u_baseColor;
+          }
+        }
+
         alphaSample = clamp(alphaSample, 0.0, 1.0);
 
-        if (alphaSample > 0.01) {
-          // Outward-facing surface normal (density decreases from bone to air)
+        if (alphaSample > 0.008) {
           vec3 N = -estimateNormal(texCoord);
           vec3 V = -rayDir;
-          // Ensure normal faces the viewer
           if (dot(N, V) < 0.0) {
             N = -N;
           }
@@ -168,55 +317,32 @@ void main() {
           float nDotKey = max(0.0, dot(N, keyLight));
           float nDotFill = max(0.0, dot(N, fillLight));
           float nDotRim = max(0.0, dot(N, rimLight));
-          float diffuseLight = u_ambient + u_diffuse * (nDotKey * 0.80 + nDotFill * 0.30 + nDotRim * 0.25);
 
-          // Blinn-Phong Glossy Specular Highlight (convex exterior sheen)
+          vec3 lightContribution = (nDotKey * 0.85) * vec3(1.0, 0.98, 0.94) +
+                                   (nDotFill * 0.28) * vec3(0.72, 0.82, 0.96) +
+                                   (nDotRim * 0.22) * vec3(0.85, 0.90, 1.0);
+
+          vec3 diffuseLight = vec3(u_ambient) + u_diffuse * lightContribution;
+
+          // Blinn-Phong Glossy Specular Highlight
           vec3 H = normalize(keyLight + V);
           float nDotH = max(0.0, dot(N, H));
-          float specular = pow(nDotH, u_specularPower) * u_specularIntensity;
+          float specular = pow(nDotH, localSpecPower) * localSpecIntensity;
 
           // Ambient Occlusion cavity darkening
           float ao = 1.0;
           if (u_enableAO) {
-            vec3 aoCoord = texCoord + N * (3.5 / u_volumeDim);
+            vec3 aoCoord = texCoord + N * (3.2 / u_volumeDim);
             if (all(greaterThanEqual(aoCoord, vec3(0.0))) && all(lessThanEqual(aoCoord, vec3(1.0)))) {
               float aoVal = texture(u_volume, aoCoord).r * huRange + u_huMin;
               if (aoVal > u_thresholdMin) {
-                ao = 0.72; // Deep cavity shadow inside eye orbits & sutures
+                ao = 0.70;
               }
             }
           }
 
-          // Preset Color Assignment
-          vec3 sampleColor = u_baseColor;
-          if (u_presetId == 5 || u_presetId == 0) {
-            // Cinematic Ivory Bone with subtle warm pinkish undertones for deeper trabeculae
-            vec3 ivoryPorcelain = vec3(0.96, 0.93, 0.90);
-            vec3 deepTrabecular = vec3(0.88, 0.75, 0.70);
-            sampleColor = mix(deepTrabecular, ivoryPorcelain, clamp((hu - u_thresholdMin) / 600.0, 0.0, 1.0));
-          } else if (u_presetId == 1) {
-            // Angiography: Red blood vessels & soft ivory bone
-            if (hu > 240.0) {
-              sampleColor = vec3(0.92, 0.88, 0.82); // Bone
-              alphaSample *= 0.45;
-            } else {
-              sampleColor = vec3(0.96, 0.18, 0.22); // Arterial blood
-            }
-          } else if (u_presetId == 2) {
-            // Skin & Soft Tissue: Warm peach / skin tones
-            sampleColor = vec3(0.88, 0.68, 0.58);
-          } else if (u_presetId == 3) {
-            // Dental: Ultra-bright pearlescent enamel
-            sampleColor = vec3(0.98, 0.96, 0.92);
-          } else if (u_presetId == 6) {
-            // Brain Soft Tissue / Neuro Parenchyma: Natural soft cerebral tissue
-            sampleColor = vec3(0.92, 0.77, 0.71);
-          }
-
-          // Final Lit Color for sample
           vec3 litColor = (sampleColor * diffuseLight * ao) + vec3(specular);
 
-          // Front-to-back accumulation
           accum.rgb += (1.0 - accum.a) * alphaSample * litColor;
           accum.a += (1.0 - accum.a) * alphaSample;
         }
@@ -228,15 +354,18 @@ void main() {
   }
 
   if (u_presetId == 4) { // MIP
-    vec3 mipColor = u_baseColor * (maxMipVal * 1.2);
+    vec3 mipColor = u_baseColor * (maxMipVal * 1.25);
     fragColor = vec4(mipColor, 1.0);
     return;
   }
 
   // Composite over vignette background
   float r = length(v_uv - 0.5);
-  vec3 bg = mix(vec3(0.05, 0.07, 0.10), vec3(0.01, 0.01, 0.02), r * 1.4);
+  vec3 bg = mix(vec3(0.04, 0.06, 0.09), vec3(0.01, 0.01, 0.015), r * 1.4);
   vec3 finalColor = accum.rgb + bg * (1.0 - accum.a);
+
+  // Perceptual sRGB Gamma Correction (RadiAnt look)
+  finalColor = pow(finalColor, vec3(1.0 / u_gamma));
 
   fragColor = vec4(finalColor, 1.0);
 }
@@ -344,9 +473,9 @@ export class WebglVolumeRenderer {
       const uniformNames = [
         'u_volume', 'u_volumeDim', 'u_boxSize', 'u_rotMatrix', 'u_pan', 'u_zoom',
         'u_resolution', 'u_thresholdMin', 'u_thresholdMax', 'u_huMin', 'u_huMax',
-        'u_clipPlaneZ', 'u_presetId', 'u_baseColor', 'u_ambient', 'u_diffuse',
+        'u_clipMin', 'u_clipMax', 'u_presetId', 'u_baseColor', 'u_ambient', 'u_diffuse',
         'u_specularPower', 'u_specularIntensity', 'u_opacityMultiplier', 'u_enableAO',
-        'u_maxSteps', 'u_stepSize'
+        'u_maxSteps', 'u_stepSize', 'u_gamma'
       ];
 
       for (const name of uniformNames) {
@@ -503,18 +632,28 @@ export class WebglVolumeRenderer {
     gl.uniform1f(this.uniforms.u_thresholdMax, options.thresholdMax);
     gl.uniform1f(this.uniforms.u_huMin, huMin);
     gl.uniform1f(this.uniforms.u_huMax, huMax);
-    gl.uniform1f(this.uniforms.u_clipPlaneZ, options.clipPlaneZ);
+
+    // 6-axis crop limits
+    const clipMin = options.clipMin || [0, 0, 0];
+    const clipMax = options.clipMax ? [...options.clipMax] : [1, 1, options.clipPlaneZ ?? 1.0];
+    if (options.clipPlaneZ !== undefined && options.clipPlaneZ < clipMax[2]) {
+      clipMax[2] = options.clipPlaneZ;
+    }
+    gl.uniform3f(this.uniforms.u_clipMin, clipMin[0], clipMin[1], clipMin[2]);
+    gl.uniform3f(this.uniforms.u_clipMax, clipMax[0], clipMax[1], clipMax[2]);
+    gl.uniform1f(this.uniforms.u_gamma, options.gamma || 2.2);
 
     // Preset & Colors
     let presetIdNum = 0;
     if (options.preset.id === 'bone') presetIdNum = 0;
-    else if (options.preset.id === 'angio') presetIdNum = 1;
-    else if (options.preset.id === 'skin') presetIdNum = 2;
-    else if (options.preset.id === 'dental') presetIdNum = 3;
+    else if (options.preset.id === 'bone_tissue') presetIdNum = 1;
+    else if (options.preset.id === 'angio') presetIdNum = 2;
+    else if (options.preset.id === 'skin') presetIdNum = 3;
     else if (options.preset.id === 'mip3d') presetIdNum = 4;
-    // @ts-ignore
-    else if (options.preset.id === 'cinematic_bone') presetIdNum = 5;
-    else if (options.preset.id === 'brain') presetIdNum = 6;
+    else if (options.preset.id === 'dental') presetIdNum = 5;
+    else if (options.preset.id === 'pulmonary') presetIdNum = 6;
+    else if (options.preset.id === 'brain') presetIdNum = 7;
+    else if (options.preset.id === 'cinematic_bone') presetIdNum = 8;
 
     gl.uniform1i(this.uniforms.u_presetId, presetIdNum);
     gl.uniform3f(

@@ -1,6 +1,7 @@
 import { DicomInstance, DicomSeries, DicomStudy, Measurement, ColorLutType } from '../types/dicom';
 import { getOrDecodeInstancePixels } from './dicomParser';
 import { getLutTable } from './lutService';
+import { DicomDirGenerator } from './dicomdirGenerator';
 import JSZip from 'jszip';
 
 export interface HighResRenderOptions {
@@ -713,7 +714,6 @@ export class ExportService {
     study: DicomStudy,
     onProgress?: (progress: { current: number; total: number; percent: number; status: string }) => void
   ): Promise<void> {
-    const { DicomDirGenerator } = await import('./dicomdirGenerator');
     const blob = await DicomDirGenerator.exportStudyAsDicomdirPackage(study, onProgress);
 
     const pId = study.patientId.replace(/[^a-zA-Z0-9_-]/g, '_') || 'PATIENT';

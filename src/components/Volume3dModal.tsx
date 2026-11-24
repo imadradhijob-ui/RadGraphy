@@ -74,11 +74,19 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
   const [selectedPreset, setSelectedPreset] = useState<Volume3dPreset>(VOLUME_3D_PRESETS[0]);
   const [thresholdMin, setThresholdMin] = useState<number>(VOLUME_3D_PRESETS[0].minThreshold);
   const [thresholdMax, setThresholdMax] = useState<number>(VOLUME_3D_PRESETS[0].maxThreshold);
-  const [clipPlaneZ, setClipPlaneZ] = useState<number>(1.0);
+  
+  // 6-Axis Bounding Box Scalpel Dissection
+  const [clipXMin, setClipXMin] = useState<number>(0.0);
+  const [clipXMax, setClipXMax] = useState<number>(1.0);
+  const [clipYMin, setClipYMin] = useState<number>(0.0);
+  const [clipYMax, setClipYMax] = useState<number>(1.0);
+  const [clipZMin, setClipZMin] = useState<number>(0.0);
+  const [clipZMax, setClipZMax] = useState<number>(1.0);
 
   // Cinematic Shading Settings
-  const [specularPower, setSpecularPower] = useState<number>(64);
-  const [specularIntensity, setSpecularIntensity] = useState<number>(0.75);
+  const [specularPower, setSpecularPower] = useState<number>(VOLUME_3D_PRESETS[0].specularPower || 48);
+  const [specularIntensity, setSpecularIntensity] = useState<number>(VOLUME_3D_PRESETS[0].specularIntensity ?? 0.80);
+  const [gamma, setGamma] = useState<number>(2.2);
   const [enableAmbientOcclusion, setEnableAmbientOcclusion] = useState<boolean>(true);
   const [ultraQuality, setUltraQuality] = useState<boolean>(true);
   const [isWebglActive, setIsWebglActive] = useState<boolean>(true);
@@ -169,6 +177,9 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
     if (preset.specularPower) {
       setSpecularPower(preset.specularPower);
     }
+    if (preset.specularIntensity !== undefined) {
+      setSpecularIntensity(preset.specularIntensity);
+    }
   };
 
   // Render 3D Canvas
@@ -219,10 +230,13 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
         preset: selectedPreset,
         thresholdMin,
         thresholdMax,
-        clipPlaneZ,
+        clipMin: [clipXMin, clipYMin, clipZMin],
+        clipMax: [clipXMax, clipYMax, clipZMax],
+        clipPlaneZ: clipZMax,
         enableAmbientOcclusion,
         specularPower,
         specularIntensity,
+        gamma,
         quality
       });
     } else {
@@ -241,8 +255,13 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
         preset: selectedPreset,
         thresholdMin,
         thresholdMax,
-        clipPlaneZ,
+        clipMin: [clipXMin, clipYMin, clipZMin],
+        clipMax: [clipXMax, clipYMax, clipZMax],
+        clipPlaneZ: clipZMax,
         enableAmbientOcclusion,
+        specularPower,
+        specularIntensity,
+        gamma,
         quality: isFast ? 'fast' : (isUltra ? 'ultra' : 'high')
       });
 
@@ -260,7 +279,7 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
       }
     }
 
-    // 3. Render 3D Orientation Compass on Overlay Canvas
+    // 3. Render 3D Orientation Compass & HUD on Overlay Canvas
     if (compassCanvasRef.current) {
       const cCanvas = compassCanvasRef.current;
       if (cCanvas.width !== displayWidth || cCanvas.height !== displayHeight) {
@@ -272,11 +291,17 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
         cCtx.save();
         cCtx.scale(dpr, dpr);
         cCtx.clearRect(0, 0, rect.width, rect.height);
-        drawOrientationCompass(cCtx, rect.width - 50, 50, yaw, pitch);
+        drawOrientationHUD(cCtx, rect.width, rect.height, yaw, pitch);
         cCtx.restore();
       }
     }
-  }, [volume, yaw, pitch, zoom, pan, selectedPreset, thresholdMin, thresholdMax, clipPlaneZ, enableAmbientOcclusion, specularPower, specularIntensity, isWebglActive, ultraQuality]);
+  }, [
+    volume, yaw, pitch, zoom, pan, selectedPreset,
+    thresholdMin, thresholdMax,
+    clipXMin, clipXMax, clipYMin, clipYMax, clipZMin, clipZMax,
+    gamma, enableAmbientOcclusion, specularPower, specularIntensity,
+    isWebglActive, ultraQuality
+  ]);
 
   // Trigger high quality render when idle
   useEffect(() => {
@@ -792,25 +817,136 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
 
             <div className="h-px bg-radiant-border" />
 
-            {/* Clip Plane (Internal Dissection) */}
-            <div className="space-y-2">
-              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Scissors className="w-3.5 h-3.5 text-rose-400" />
-                <span>Axial Dissection / Clip Plane</span>
+            {/* 3D Scalpel & Multi-Axis Crop */}
+            <div className="space-y-3">
+              <div className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                <div className="flex items-center gap-1.5">
+                  <Scissors className="w-3.5 h-3.5 text-rose-400" />
+                  <span>3D Scalpel & Multi-Axis Crop</span>
+                </div>
+                <button
+                  onClick={() => {
+                    setClipXMin(0); setClipXMax(1);
+                    setClipYMin(0); setClipYMax(1);
+                    setClipZMin(0); setClipZMax(1);
+                  }}
+                  className="text-[10px] text-rose-400 hover:text-rose-200 underline cursor-pointer"
+                >
+                  Reset Crop
+                </button>
               </div>
-              <div className="flex justify-between text-xs">
-                <span className="text-slate-400">Slice Depth:</span>
-                <span className="font-mono text-rose-300 font-bold">{Math.round(clipPlaneZ * 100)}%</span>
+
+              {/* Quick Medical Cut Presets */}
+              <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => {
+                    setClipYMin(0.12);
+                  }}
+                  className="px-2 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 rounded text-[11px] text-rose-300 font-semibold transition-colors cursor-pointer text-center"
+                  title="Remove Examination Patient Table"
+                >
+                  Cut CT Table
+                </button>
+                <button
+                  onClick={() => {
+                    setClipZMax(0.68);
+                  }}
+                  className="px-2 py-1.5 bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-800/60 rounded text-[11px] text-cyan-300 font-semibold transition-colors cursor-pointer text-center"
+                  title="Cut Cranial Vault to Inspect Brain / Skull Base"
+                >
+                  Skull Cap Cut
+                </button>
               </div>
-              <input
-                type="range"
-                min="0.1"
-                max="1.0"
-                step="0.02"
-                value={clipPlaneZ}
-                onChange={(e) => setClipPlaneZ(parseFloat(e.target.value))}
-                className="w-full accent-rose-500 bg-slate-800 rounded h-1.5 cursor-pointer"
-              />
+
+              {/* Axial Depth (Z) */}
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">Axial (Z Superior-Inferior):</span>
+                  <span className="font-mono text-rose-300 font-bold">{Math.round(clipZMin * 100)}% - {Math.round(clipZMax * 100)}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.85"
+                    step="0.02"
+                    value={clipZMin}
+                    onChange={(e) => setClipZMin(Math.min(parseFloat(e.target.value), clipZMax - 0.05))}
+                    className="w-1/2 accent-rose-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                    title="Axial Bottom Cut"
+                  />
+                  <input
+                    type="range"
+                    min="0.15"
+                    max="1.0"
+                    step="0.02"
+                    value={clipZMax}
+                    onChange={(e) => setClipZMax(Math.max(parseFloat(e.target.value), clipZMin + 0.05))}
+                    className="w-1/2 accent-rose-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                    title="Axial Top Cut"
+                  />
+                </div>
+              </div>
+
+              {/* Coronal A-P (Y) */}
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">Coronal (Y Anterior-Posterior):</span>
+                  <span className="font-mono text-cyan-300 font-bold">{Math.round(clipYMin * 100)}% - {Math.round(clipYMax * 100)}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.85"
+                    step="0.02"
+                    value={clipYMin}
+                    onChange={(e) => setClipYMin(Math.min(parseFloat(e.target.value), clipYMax - 0.05))}
+                    className="w-1/2 accent-cyan-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                    title="Coronal Front Cut"
+                  />
+                  <input
+                    type="range"
+                    min="0.15"
+                    max="1.0"
+                    step="0.02"
+                    value={clipYMax}
+                    onChange={(e) => setClipYMax(Math.max(parseFloat(e.target.value), clipYMin + 0.05))}
+                    className="w-1/2 accent-cyan-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                    title="Coronal Back Cut"
+                  />
+                </div>
+              </div>
+
+              {/* Sagittal Lateral (X) */}
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">Sagittal (X Right-Left):</span>
+                  <span className="font-mono text-amber-300 font-bold">{Math.round(clipXMin * 100)}% - {Math.round(clipXMax * 100)}%</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.85"
+                    step="0.02"
+                    value={clipXMin}
+                    onChange={(e) => setClipXMin(Math.min(parseFloat(e.target.value), clipXMax - 0.05))}
+                    className="w-1/2 accent-amber-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                    title="Sagittal Right Cut"
+                  />
+                  <input
+                    type="range"
+                    min="0.15"
+                    max="1.0"
+                    step="0.02"
+                    value={clipXMax}
+                    onChange={(e) => setClipXMax(Math.max(parseFloat(e.target.value), clipXMin + 0.05))}
+                    className="w-1/2 accent-amber-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                    title="Sagittal Left Cut"
+                  />
+                </div>
+              </div>
             </div>
 
             <div className="h-px bg-radiant-border" />
@@ -856,6 +992,23 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
                 />
               </div>
 
+              {/* Perceptual Medical Gamma */}
+              <div>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-400">RadiAnt Medical Gamma (sRGB):</span>
+                  <span className="font-mono text-cyan-300 font-bold">{gamma.toFixed(1)}</span>
+                </div>
+                <input
+                  type="range"
+                  min="1.4"
+                  max="2.8"
+                  step="0.1"
+                  value={gamma}
+                  onChange={(e) => setGamma(parseFloat(e.target.value))}
+                  className="w-full accent-cyan-500 bg-slate-800 rounded h-1.5 cursor-pointer"
+                />
+              </div>
+
               {/* Ambient Occlusion Toggle */}
               <button
                 onClick={() => setEnableAmbientOcclusion(!enableAmbientOcclusion)}
@@ -892,9 +1045,12 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
                 setPitch(0);
                 setZoom(1.0);
                 setPan({ x: 0, y: 0 });
-                setClipPlaneZ(1.0);
-                setSpecularPower(64);
-                setSpecularIntensity(0.75);
+                setClipXMin(0); setClipXMax(1);
+                setClipYMin(0); setClipYMax(1);
+                setClipZMin(0); setClipZMax(1);
+                setGamma(2.2);
+                setSpecularPower(VOLUME_3D_PRESETS[0].specularPower || 48);
+                setSpecularIntensity(VOLUME_3D_PRESETS[0].specularIntensity ?? 0.80);
                 handleSelectPreset(VOLUME_3D_PRESETS[0]);
               }}
               className="w-full flex items-center justify-center gap-2 py-2 bg-radiant-dark hover:bg-radiant-hover text-slate-300 rounded-lg border border-radiant-border text-xs transition-colors font-medium mt-auto cursor-pointer"
@@ -909,10 +1065,10 @@ export const Volume3dModal: React.FC<Volume3dModalProps> = ({
   );
 };
 
-function drawOrientationCompass(
+function drawOrientationHUD(
   ctx: CanvasRenderingContext2D,
-  cx: number,
-  cy: number,
+  width: number,
+  height: number,
   yawDeg: number,
   pitchDeg: number
 ) {
@@ -921,37 +1077,128 @@ function drawOrientationCompass(
   const cosY = Math.cos(radY), sinY = Math.sin(radY);
   const cosP = Math.cos(radP), sinP = Math.sin(radP);
 
-  const size = 28;
+  // 1. Draw 3D Shaded Orientation Cube in Top-Right
+  const cx = width - 62;
+  const cy = 62;
+  const s = 22; // cube radius
 
-  // Anatomical axes in volume space (LPS):
-  // R: Right (-x_vol), A: Anterior (-y_vol), S: Superior / Head (-z_vol)
-  const axes = [
-    { label: 'R', vx: -1, vy: 0, vz: 0, color: '#f59e0b' },
-    { label: 'A', vx: 0, vy: -1, vz: 0, color: '#38bdf8' },
-    { label: 'S', vx: 0, vy: 0, vz: -1, color: '#10b981' }
+  const vertices = [
+    [-1, -1, -1], [1, -1, -1], [1, 1, -1], [-1, 1, -1], // Superior (-Z)
+    [-1, -1,  1], [1, -1,  1], [1, 1,  1], [-1, 1,  1]  // Inferior (+Z)
   ];
 
-  ctx.lineWidth = 2.5;
+  const projVerts = vertices.map(([vx, vy, vz]) => {
+    const camX = cosY * vx - sinY * vy;
+    const camY = (sinY * sinP) * vx + (cosY * sinP) * vy - cosP * vz;
+    const camZ = (sinY * cosP) * vx + (cosY * cosP) * vy + sinP * vz;
+    return {
+      x: cx + camX * s,
+      y: cy - camY * s,
+      z: camZ
+    };
+  });
 
-  for (const axis of axes) {
-    // Project into camera screen via M^T:
-    const camX = cosY * axis.vx - sinY * axis.vy;
-    const camY = (sinY * sinP) * axis.vx + (cosY * sinP) * axis.vy - cosP * axis.vz;
-    const camZ = (sinY * cosP) * axis.vx + (cosY * cosP) * axis.vy + sinP * axis.vz;
+  const faces = [
+    { name: 'A', indices: [0, 1, 5, 4], normal: [0, -1, 0], color: '#0284c7', label: 'A' }, // Anterior
+    { name: 'P', indices: [2, 3, 7, 6], normal: [0,  1, 0], color: '#475569', label: 'P' }, // Posterior
+    { name: 'R', indices: [0, 4, 7, 3], normal: [-1, 0, 0], color: '#d97706', label: 'R' }, // Right
+    { name: 'L', indices: [1, 2, 6, 5], normal: [ 1, 0, 0], color: '#2563eb', label: 'L' }, // Left
+    { name: 'S', indices: [0, 3, 2, 1], normal: [0, 0, -1], color: '#059669', label: 'S' }, // Superior
+    { name: 'I', indices: [4, 5, 6, 7], normal: [0, 0,  1], color: '#e11d48', label: 'I' }  // Inferior
+  ];
 
-    const sx = cx + camX * size;
-    const sy = cy - camY * size;
+  const projectedFaces = faces.map(face => {
+    const [nx, ny, nz] = face.normal;
+    const camNZ = (sinY * cosP) * nx + (cosY * sinP) * ny + sinP * nz;
+    const avgZ = face.indices.reduce((sum, idx) => sum + projVerts[idx].z, 0) / 4;
+    return { ...face, camNZ, avgZ };
+  });
 
-    ctx.strokeStyle = axis.color;
-    ctx.globalAlpha = camZ >= -0.2 ? 1.0 : 0.45;
+  projectedFaces.sort((a, b) => a.avgZ - b.avgZ);
+
+  for (const face of projectedFaces) {
+    if (face.camNZ <= -0.05) continue;
+
+    const p0 = projVerts[face.indices[0]];
+    const p1 = projVerts[face.indices[1]];
+    const p2 = projVerts[face.indices[2]];
+    const p3 = projVerts[face.indices[3]];
+
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(sx, sy);
+    ctx.moveTo(p0.x, p0.y);
+    ctx.lineTo(p1.x, p1.y);
+    ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y);
+    ctx.closePath();
+
+    const intensity = Math.max(0.4, 0.45 + face.camNZ * 0.55);
+    ctx.fillStyle = face.color;
+    ctx.globalAlpha = 0.88 * intensity;
+    ctx.fill();
+
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#ffffff';
+    ctx.globalAlpha = 0.9;
     ctx.stroke();
 
-    ctx.fillStyle = axis.color;
-    ctx.font = 'bold 11px sans-serif';
-    ctx.fillText(axis.label, sx + (camX >= 0 ? 5 : -14), sy + (camY >= 0 ? -4 : 14));
+    const faceCenterX = (p0.x + p1.x + p2.x + p3.x) / 4;
+    const faceCenterY = (p0.y + p1.y + p2.y + p3.y) / 4;
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.globalAlpha = 1.0;
+    ctx.fillText(face.label, faceCenterX, faceCenterY);
   }
-  ctx.globalAlpha = 1.0;
+
+  // 2. Clinical Anatomical Orientation Edge Labels (Top, Bottom, Left, Right)
+  const directions = [
+    { label: 'R', vx: -1, vy: 0, vz: 0 },
+    { label: 'L', vx: 1, vy: 0, vz: 0 },
+    { label: 'A', vx: 0, vy: -1, vz: 0 },
+    { label: 'P', vx: 0, vy: 1, vz: 0 },
+    { label: 'S', vx: 0, vy: 0, vz: -1 },
+    { label: 'I', vx: 0, vy: 0, vz: 1 }
+  ];
+
+  let topDir = 'S', botDir = 'I', leftDir = 'R', rightDir = 'L';
+  let minCamY = 999, maxCamY = -999, minCamX = 999, maxCamX = -999;
+
+  for (const dir of directions) {
+    const cX = cosY * dir.vx - sinY * dir.vy;
+    const cY = (sinY * sinP) * dir.vx + (cosY * sinP) * dir.vy - cosP * dir.vz;
+    if (cY < minCamY) { minCamY = cY; topDir = dir.label; }
+    if (cY > maxCamY) { maxCamY = cY; botDir = dir.label; }
+    if (cX < minCamX) { minCamX = cX; leftDir = dir.label; }
+    if (cX > maxCamX) { maxCamX = cX; rightDir = dir.label; }
+  }
+
+  const drawPillBadge = (text: string, bx: number, by: number, color: string) => {
+    ctx.save();
+    ctx.font = 'bold 12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const textWidth = ctx.measureText(text).width;
+    const padX = 8;
+    const w = textWidth + padX * 2;
+    const h = 20;
+
+    ctx.fillStyle = 'rgba(8, 12, 22, 0.78)';
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(bx - w / 2, by - h / 2, w, h, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = color;
+    ctx.fillText(text, bx, by);
+    ctx.restore();
+  };
+
+  drawPillBadge(topDir, width / 2, 20, '#38bdf8');
+  drawPillBadge(botDir, width / 2, height - 20, '#38bdf8');
+  drawPillBadge(leftDir, 24, height / 2, '#fbbf24');
+  drawPillBadge(rightDir, width - 24, height / 2, '#fbbf24');
 }

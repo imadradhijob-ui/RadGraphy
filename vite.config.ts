@@ -11,6 +11,13 @@ function getDicomNetwork() {
   return require('./electron/dicomNetwork.cjs')
 }
 
+interface OpticalDriveInfo {
+  driveLetter: string
+  name: string
+  volumeName: string
+  rootPath: string
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   base: './',
@@ -30,10 +37,10 @@ export default defineConfig({
                 const result = await testDicomEcho(config)
                 res.setHeader('Content-Type', 'application/json')
                 res.end(JSON.stringify(result))
-              } catch (err) {
+              } catch (err: any) {
                 res.statusCode = 500
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ success: false, message: err.message, responseTimeMs: 0 }))
+                res.end(JSON.stringify({ success: false, message: err?.message || 'Echo failed', responseTimeMs: 0 }))
               }
             })
           } else {
@@ -55,10 +62,10 @@ export default defineConfig({
                 const results = await searchDicomStudies(serverConfig, filters)
                 res.setHeader('Content-Type', 'application/json')
                 res.end(JSON.stringify(results))
-              } catch (err) {
+              } catch (err: any) {
                 res.statusCode = 500
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: err.message }))
+                res.end(JSON.stringify({ error: err?.message || 'Search failed' }))
               }
             })
           } else {
@@ -82,16 +89,16 @@ export default defineConfig({
                 res.setHeader('Cache-Control', 'no-cache')
                 res.setHeader('Connection', 'keep-alive')
 
-                const result = await retrieveDicomStudy(serverConfig, studyInstanceUid, (slice) => {
+                const result = await retrieveDicomStudy(serverConfig, studyInstanceUid, (slice: any) => {
                   res.write(`data: ${JSON.stringify({ type: 'slice', file: slice })}\n\n`)
                 })
 
                 res.write(`data: ${JSON.stringify({ type: 'done', count: result.count })}\n\n`)
                 res.end()
-              } catch (err) {
+              } catch (err: any) {
                 res.statusCode = 500
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: err.message, success: false, files: [] }))
+                res.end(JSON.stringify({ error: err?.message || 'Retrieve failed', success: false, files: [] }))
               }
             })
           } else {
@@ -113,10 +120,10 @@ export default defineConfig({
                 const result = await retrieveDicomStudy(serverConfig, studyInstanceUid)
                 res.setHeader('Content-Type', 'application/json')
                 res.end(JSON.stringify(result))
-              } catch (err) {
+              } catch (err: any) {
                 res.statusCode = 500
                 res.setHeader('Content-Type', 'application/json')
-                res.end(JSON.stringify({ error: err.message, success: false, files: [] }))
+                res.end(JSON.stringify({ error: err?.message || 'Retrieve failed', success: false, files: [] }))
               }
             })
           } else {
@@ -127,7 +134,7 @@ export default defineConfig({
 
         server.middlewares.use('/api/pacs/store', (req, res) => {
           if (req.method === 'POST') {
-            const chunks = []
+            const chunks: any[] = []
             req.on('data', chunk => { chunks.push(chunk) })
             req.on('end', async () => {
               try {
@@ -155,10 +162,10 @@ export default defineConfig({
           const fs = require('fs')
           const { exec } = require('child_process')
 
-          const findDrive = () => new Promise((resolve) => {
+          const findDrive = (): Promise<OpticalDriveInfo | null> => new Promise((resolve) => {
             if (process.platform !== 'win32') return resolve(null)
             const cmd = 'powershell -NoProfile -Command "[System.IO.DriveInfo]::GetDrives() | Select-Object Name, DriveType, IsReady, VolumeLabel | ConvertTo-Json"'
-            exec(cmd, { timeout: 4000 }, (err, stdout) => {
+            exec(cmd, { timeout: 4000 }, (err: any, stdout: string) => {
               try {
                 if (!err && stdout && stdout.trim()) {
                   let data = JSON.parse(stdout.trim())
@@ -217,11 +224,11 @@ export default defineConfig({
             isAborted = true
           })
 
-          const findDrive = () => new Promise((resolve) => {
+          const findDrive = (): Promise<OpticalDriveInfo | null> => new Promise((resolve) => {
             if (process.platform !== 'win32') return resolve(null)
 
             const cmd = 'powershell -NoProfile -Command "[System.IO.DriveInfo]::GetDrives() | Select-Object Name, DriveType, IsReady, VolumeLabel | ConvertTo-Json"'
-            exec(cmd, { timeout: 3500 }, (err, stdout) => {
+            exec(cmd, { timeout: 3500 }, (err: any, stdout: string) => {
               try {
                 if (!err && stdout && stdout.trim()) {
                   let data = JSON.parse(stdout.trim())
@@ -282,7 +289,7 @@ export default defineConfig({
 
           res.write(`data: ${JSON.stringify({ type: 'detected', driveLetter: ready.driveLetter, volumeName: ready.volumeName, name: ready.name })}\n\n`)
 
-          const scanDir = (dirPath, onFile, depth = 0) => {
+          const scanDir = (dirPath: string, onFile: (file: any) => void, depth = 0) => {
             if (isAborted || depth > 8) return
             try {
               const entries = fs.readdirSync(dirPath, { withFileTypes: true })
@@ -311,7 +318,7 @@ export default defineConfig({
           }
 
           let sliceCount = 0
-          scanDir(ready.rootPath, (file) => {
+          scanDir(ready.rootPath, (file: any) => {
             if (isAborted) return
             sliceCount++
             res.write(`data: ${JSON.stringify({ type: 'slice', file, index: sliceCount })}\n\n`)
@@ -325,6 +332,24 @@ export default defineConfig({
       }
     }
   ],
+  build: {
+    chunkSizeWarningLimit: 2500,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes('node_modules')) {
+            if (id.includes('dcmjs') || id.includes('dicom-parser') || id.includes('jszip')) {
+              return 'dicom-core'
+            }
+            if (id.includes('lucide-react')) {
+              return 'ui-icons'
+            }
+            return 'vendor'
+          }
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     host: true,

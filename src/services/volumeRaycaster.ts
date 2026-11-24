@@ -1,6 +1,16 @@
 import { Volume3D } from './mprEngine';
 
-export type Volume3dPresetId = 'cinematic_bone' | 'bone' | 'brain' | 'angio' | 'skin' | 'dental' | 'mip3d' | 'endo';
+export type Volume3dPresetId =
+  | 'cinematic_bone'
+  | 'bone'
+  | 'bone_tissue'
+  | 'angio'
+  | 'skin'
+  | 'dental'
+  | 'pulmonary'
+  | 'brain'
+  | 'mip3d'
+  | 'endo';
 
 export interface Volume3dPreset {
   id: Volume3dPresetId;
@@ -9,6 +19,7 @@ export interface Volume3dPreset {
   minThreshold: number;
   maxThreshold: number;
   specularPower: number;
+  specularIntensity?: number;
   ambient: number;
   diffuse: number;
   opacityMultiplier: number;
@@ -21,88 +32,121 @@ export interface Volume3dPreset {
 
 export const VOLUME_3D_PRESETS: Volume3dPreset[] = [
   {
-    id: 'cinematic_bone',
-    name: 'Cinematic Skull & Bone (HD Porcelain)',
-    category: 'Cinematic Skeletal (Ultra-Gloss)',
-    minThreshold: 180,
-    maxThreshold: 1600,
-    specularPower: 64,
-    ambient: 0.20,
-    diffuse: 0.85,
-    opacityMultiplier: 0.95,
-    colorGrad: { r: 245, g: 238, b: 230 }
-  },
-  {
-    id: 'brain',
-    name: '3D Brain Tissue & Parenchyma (Neuro)',
-    category: 'Neuro / Brain Soft Tissue',
-    minThreshold: 22,
-    maxThreshold: 120,
-    specularPower: 24,
-    ambient: 0.32,
-    diffuse: 0.72,
-    opacityMultiplier: 0.88,
-    colorGrad: { r: 235, g: 195, b: 180 }
-  },
-  {
     id: 'bone',
-    name: '3D Bone & Skeleton (Ivory / Gold)',
+    name: 'RadiAnt Bone & Skeleton (Ivory & Gold)',
     category: 'Orthopedic / Skeletal',
     minThreshold: 140,
     maxThreshold: 1300,
-    specularPower: 32,
+    specularPower: 48,
+    specularIntensity: 0.80,
     ambient: 0.22,
-    diffuse: 0.78,
-    opacityMultiplier: 0.85,
-    colorGrad: { r: 235, g: 215, b: 175 }
+    diffuse: 0.82,
+    opacityMultiplier: 0.90,
+    colorGrad: { r: 245, g: 235, b: 215 }
+  },
+  {
+    id: 'bone_tissue',
+    name: 'RadiAnt Bone + Soft Tissue (Composite)',
+    category: 'Full Anatomy / Skin Envelope',
+    minThreshold: -250,
+    maxThreshold: 1200,
+    specularPower: 40,
+    specularIntensity: 0.65,
+    ambient: 0.26,
+    diffuse: 0.76,
+    opacityMultiplier: 0.88,
+    colorGrad: { r: 235, g: 185, b: 160 }
   },
   {
     id: 'angio',
-    name: '3D CT Angiography (Vascular Red)',
+    name: 'RadiAnt CT Angiography (Vascular Contrast)',
     category: 'Cardiovascular & Vessels',
     minThreshold: 90,
     maxThreshold: 550,
-    specularPower: 24,
-    ambient: 0.28,
-    diffuse: 0.72,
-    opacityMultiplier: 0.9,
-    colorGrad: { r: 245, g: 45, b: 55 }
+    specularPower: 42,
+    specularIntensity: 0.85,
+    ambient: 0.24,
+    diffuse: 0.78,
+    opacityMultiplier: 0.95,
+    colorGrad: { r: 245, g: 35, b: 45 }
+  },
+  {
+    id: 'cinematic_bone',
+    name: 'Cinematic Skull & Bone (Ultra-HD)',
+    category: 'Cinematic Skeletal (Porcelain)',
+    minThreshold: 180,
+    maxThreshold: 1600,
+    specularPower: 64,
+    specularIntensity: 0.90,
+    ambient: 0.20,
+    diffuse: 0.85,
+    opacityMultiplier: 0.96,
+    colorGrad: { r: 250, g: 245, b: 238 }
   },
   {
     id: 'skin',
-    name: '3D Soft Tissue & Skin Surface',
+    name: 'RadiAnt Skin & Facial Anatomy',
     category: 'Facial & Superficial Anatomy',
-    minThreshold: -250,
+    minThreshold: -260,
     maxThreshold: 180,
-    specularPower: 12,
-    ambient: 0.35,
-    diffuse: 0.65,
-    opacityMultiplier: 0.75,
-    colorGrad: { r: 225, g: 175, b: 145 }
+    specularPower: 16,
+    specularIntensity: 0.35,
+    ambient: 0.32,
+    diffuse: 0.68,
+    opacityMultiplier: 0.82,
+    colorGrad: { r: 228, g: 172, b: 146 }
   },
   {
     id: 'dental',
-    name: '3D Dental & Mandible High-Density',
-    category: 'Maxillofacial / Teeth & Implants',
-    minThreshold: 260,
+    name: 'RadiAnt Dental & Maxillofacial',
+    category: 'Maxillofacial / Teeth & Enamel',
+    minThreshold: 240,
     maxThreshold: 1800,
-    specularPower: 40,
+    specularPower: 60,
+    specularIntensity: 0.88,
     ambient: 0.18,
-    diffuse: 0.82,
-    opacityMultiplier: 0.95,
-    colorGrad: { r: 245, g: 240, b: 225 }
+    diffuse: 0.84,
+    opacityMultiplier: 0.96,
+    colorGrad: { r: 250, g: 246, b: 236 }
+  },
+  {
+    id: 'pulmonary',
+    name: 'RadiAnt Pulmonary & Airway',
+    category: 'Thoracic / Trachea & Bronchi',
+    minThreshold: -950,
+    maxThreshold: -200,
+    specularPower: 32,
+    specularIntensity: 0.65,
+    ambient: 0.30,
+    diffuse: 0.70,
+    opacityMultiplier: 0.85,
+    colorGrad: { r: 60, g: 210, b: 245 }
+  },
+  {
+    id: 'brain',
+    name: 'RadiAnt Brain & Parenchyma (Neuro)',
+    category: 'Neuro / Brain Soft Tissue',
+    minThreshold: 20,
+    maxThreshold: 120,
+    specularPower: 22,
+    specularIntensity: 0.40,
+    ambient: 0.30,
+    diffuse: 0.72,
+    opacityMultiplier: 0.90,
+    colorGrad: { r: 235, g: 198, b: 184 }
   },
   {
     id: 'mip3d',
-    name: '3D MIP (Maximum Intensity Projection)',
+    name: 'RadiAnt 3D MIP (Maximum Intensity)',
     category: 'Vascular & Contrast 360° MIP',
     minThreshold: -100,
     maxThreshold: 1200,
     specularPower: 0,
+    specularIntensity: 0,
     ambient: 1.0,
     diffuse: 0.0,
     opacityMultiplier: 1.0,
-    colorGrad: { r: 255, g: 220, b: 180 }
+    colorGrad: { r: 255, g: 225, b: 185 }
   }
 ];
 
@@ -116,8 +160,13 @@ export interface Render3dOptions {
   preset: Volume3dPreset;
   thresholdMin?: number;
   thresholdMax?: number;
-  clipPlaneZ?: number; // 0.0 to 1.0 (clipping from top or bottom)
+  clipMin?: [number, number, number]; // [x, y, z] 0.0 to 1.0
+  clipMax?: [number, number, number]; // [x, y, z] 0.0 to 1.0
+  clipPlaneZ?: number; // legacy 0.0 to 1.0
   enableAmbientOcclusion?: boolean;
+  specularPower?: number;
+  specularIntensity?: number;
+  gamma?: number;
   quality: 'fast' | 'high' | 'ultra';
 }
 
@@ -146,8 +195,13 @@ export class VolumeRaycaster {
       preset,
       thresholdMin = preset.minThreshold,
       thresholdMax = preset.maxThreshold,
+      clipMin = [0, 0, 0],
+      clipMax = [1, 1, 1],
       clipPlaneZ = 1.0,
       enableAmbientOcclusion = true,
+      specularPower = preset.specularPower,
+      specularIntensity = preset.specularIntensity ?? 0.75,
+      gamma = 2.2,
       quality = 'high'
     } = options;
 
@@ -185,10 +239,19 @@ export class VolumeRaycaster {
     const isAngio = preset.id === 'angio';
     const isSkin = preset.id === 'skin';
     const isDental = preset.id === 'dental';
+    const isBoneTissue = preset.id === 'bone_tissue';
+    const isPulmonary = preset.id === 'pulmonary';
 
-    const maxZLimit = Math.floor(dimZ * clipPlaneZ);
+    // 6-axis crop limits
+    const effClipZMax = Math.min(clipMax[2], clipPlaneZ);
+    const minXLimit = Math.floor(dimX * clipMin[0]);
+    const maxXLimit = Math.floor(dimX * clipMax[0]);
+    const minYLimit = Math.floor(dimY * clipMin[1]);
+    const maxYLimit = Math.floor(dimY * clipMax[1]);
+    const minZLimit = Math.floor(dimZ * clipMin[2]);
+    const maxZLimit = Math.floor(dimZ * effClipZMax);
+
     const skipStep = isFast ? 2 : 1;
-
     const sliceSize = dimX * dimY;
 
     // Precomputed transfer constants
@@ -196,6 +259,7 @@ export class VolumeRaycaster {
     const tfMult = preset.opacityMultiplier;
     const minScreenDim = Math.min(width, height);
     const baseScale = (minScreenDim * 0.82) * zoom;
+    const invGamma = 1.0 / (gamma || 2.2);
 
     for (let py = 0; py < height; py += skipStep) {
       // Millimeters along screen Y from center
@@ -212,8 +276,11 @@ export class VolumeRaycaster {
 
         let maxHuMip = -1000;
 
+        // Pseudo-random jitter offset along ray depth to eradicate woodgrain banding rings
+        const jitter = (((px * 12.9898 + py * 78.233) * 43758.5453) % 1.0 + 1.0) % 1.0;
+
         for (let s = -maxSteps / 2; s < maxSteps / 2; s += 1) {
-          const sz = s * stepSize; // Millimeters along ray depth
+          const sz = (s + jitter * 0.9) * stepSize; // Millimeters along ray depth
 
           // Camera Space: +X is Right, +Y is Up (-sy), +Z is Forward (sz)
           const camX = sx;
@@ -230,7 +297,11 @@ export class VolumeRaycaster {
           const vy = ry / spacingY + cy;
           const vz = rz / spacingZ + cz;
 
-          if (vx >= 1 && vx < dimX - 2 && vy >= 1 && vy < dimY - 2 && vz >= 0 && vz < maxZLimit - 1) {
+          if (
+            vx >= Math.max(1, minXLimit) && vx < Math.min(dimX - 2, maxXLimit) &&
+            vy >= Math.max(1, minYLimit) && vy < Math.min(dimY - 2, maxYLimit) &&
+            vz >= Math.max(0, minZLimit) && vz < Math.min(dimZ - 1, maxZLimit)
+          ) {
             // High quality trilinear sampling
             let hu: number;
             const ivx = Math.floor(vx);
@@ -272,126 +343,174 @@ export class VolumeRaycaster {
 
             if (isMip) {
               if (hu > maxHuMip) maxHuMip = hu;
-            } else if (hu >= thresholdMin) {
-              // Smoothstep S-Curve Opacity Function (3t^2 - 2t^3)
-              const tRaw = Math.min(1.0, Math.max(0.0, (hu - thresholdMin) / tfRange));
-              const t = tRaw * tRaw * (3 - 2 * tRaw);
-              let sampleAlpha = t * tfMult * (isUltra ? 0.35 : (isFast ? 0.6 : 0.45));
-
-              // Central difference 3D gradient for silky smooth surface normal
-              const vIdx = ivz * sliceSize + ivy * dimX + ivx;
-              const nx = (voxels[vIdx + 1] - voxels[vIdx - 1]) / (2 * spacingX);
-              const ny = (voxels[vIdx + dimX] - voxels[vIdx - dimX]) / (2 * spacingY);
-              const nz = (voxels[vIdx + sliceSize] - voxels[vIdx - sliceSize]) / (2 * spacingZ);
-
-              const gradLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
-              let diffuse = preset.diffuse;
-              let specular = 0;
-              let aoFactor = 1.0;
-
-              if (gradLen > 6) {
-                const invLen = 1.0 / gradLen;
-                const nnx = nx * invLen;
-                const nny = ny * invLen;
-                const nnz = nz * invLen;
-
-                // Rotate normal to camera space
-                const cnx1 = nnx * cosY + nnz * sinY;
-                const cnz1 = -nnx * sinY + nnz * cosY;
-                const cny = nny * cosP + cnz1 * sinP;
-                const cnz = -nny * sinP + cnz1 * cosP;
-                const cnx = cnx1;
-
-                // 1. Key Light
-                const nDotKey = Math.max(0, cnx * kLx + cny * kLy + cnz * kLz);
-                // 2. Soft Fill Light (cool blue)
-                const nDotFill = Math.max(0, cnx * fLx + cny * fLy + cnz * fLz);
-                // 3. Rim Light (silhouette highlight)
-                const nDotRim = Math.max(0, cnx * rLx + cny * rLy + cnz * rLz);
-
-                diffuse = preset.ambient + preset.diffuse * (nDotKey * 0.85 + nDotFill * 0.25 + nDotRim * 0.2);
-
-                if (preset.specularPower > 0 && nDotKey > 0) {
-                  // Blinn-Phong Half-Vector Specular
-                  const hx = kLx;
-                  const hy = kLy;
-                  const hz = kLz + 1.0;
-                  const hLen = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
-                  const nDotH = Math.max(0, (cnx * hx + cny * hy + cnz * hz) / hLen);
-                  specular = Math.pow(nDotH, preset.specularPower) * 0.55;
-                }
-
-                // Ambient Occlusion cavity darkening
-                if (enableAmbientOcclusion && !isFast) {
-                  const aoStepX = Math.round(nnx * 2.5);
-                  const aoStepY = Math.round(nny * 2.5);
-                  const aoStepZ = Math.round(nnz * 2.5);
-                  const aoVx = ivx + aoStepX;
-                  const aoVy = ivy + aoStepY;
-                  const aoVz = ivz + aoStepZ;
-                  if (aoVx >= 0 && aoVx < dimX && aoVy >= 0 && aoVy < dimY && aoVz >= 0 && aoVz < dimZ) {
-                    const aoHu = voxels[aoVz * sliceSize + aoVy * dimX + aoVx];
-                    if (aoHu > thresholdMin) {
-                      aoFactor = 0.75; // Inside a cavity or joint groove
-                    }
-                  }
-                }
-              }
-
+            } else {
+              let sampleAlpha = 0;
               let baseR = preset.colorGrad.r;
               let baseG = preset.colorGrad.g;
               let baseB = preset.colorGrad.b;
+              let localSpecPower = specularPower;
+              let localSpecIntensity = specularIntensity;
 
-              if (isAngio) {
-                if (hu > 240) {
-                  // Bone in angio mode -> Soft Ivory Translucent
-                  baseR = 220; baseG = 220; baseB = 210;
-                  sampleAlpha *= 0.45;
-                } else {
-                  // Vessels / Contrast -> Crimson Red / Coral
-                  baseR = 250; baseG = 30; baseB = 40;
-                  sampleAlpha *= 0.95;
+              if (isBoneTissue) {
+                if (hu >= -250) {
+                  if (hu < 120) {
+                    const stRaw = Math.min(1.0, Math.max(0.0, (hu + 250) / 370));
+                    sampleAlpha = stRaw * stRaw * 0.08 * tfMult * (isUltra ? 0.35 : 0.45);
+                    baseR = 225; baseG = 158; baseB = 132;
+                    localSpecPower = 18; localSpecIntensity = 0.35;
+                  } else if (hu < 240) {
+                    const mRaw = Math.min(1.0, Math.max(0.0, (hu - 120) / 120));
+                    sampleAlpha = (0.05 + mRaw * 0.18) * tfMult * (isUltra ? 0.35 : 0.45);
+                    baseR = 198; baseG = 108; baseB = 92;
+                    localSpecPower = 24; localSpecIntensity = 0.45;
+                  } else {
+                    const bRaw = Math.min(1.0, Math.max(0.0, (hu - 240) / tfRange));
+                    const sCurve = bRaw * bRaw * (3 - 2 * bRaw);
+                    sampleAlpha = (0.35 + sCurve * 0.65) * tfMult * (isUltra ? 0.35 : 0.45);
+                    baseR = 245; baseG = 236; baseB = 222;
+                    localSpecPower = 56; localSpecIntensity = 0.80;
+                  }
                 }
-              } else if (isSkin) {
-                // Lifelike skin tones with warmth
-                baseR = Math.round(220 + t * 30);
-                baseG = Math.round(160 + t * 25);
-                baseB = Math.round(135 + t * 25);
-              } else if (isDental) {
-                // High density dental enamel & gold
-                baseR = Math.round(245 + t * 10);
-                baseG = Math.round(235 + t * 15);
-                baseB = Math.round(210 + t * 25);
-              } else if (preset.id === 'brain') {
-                // Natural anatomical brain tissue
-                baseR = Math.round(230 - (1 - t) * 20);
-                baseG = Math.round(195 - (1 - t) * 25);
-                baseB = Math.round(180 - (1 - t) * 30);
-              } else if (preset.id === 'cinematic_bone') {
-                // High-definition porcelain ivory bone
-                baseR = Math.round(245 - (1 - t) * 15);
-                baseG = Math.round(238 - (1 - t) * 20);
-                baseB = Math.round(230 - (1 - t) * 25);
-              } else {
-                // RadiAnt Bone Gold & Ivory
-                baseR = Math.round(225 + t * 30);
-                baseG = Math.round(195 + t * 40);
-                baseB = Math.round(150 + t * 50);
+              } else if (isAngio) {
+                if (hu >= thresholdMin) {
+                  if (hu > 260) {
+                    const bRaw = Math.min(1.0, Math.max(0.0, (hu - 260) / 600));
+                    sampleAlpha = (0.15 + bRaw * 0.35) * tfMult * (isUltra ? 0.35 : 0.45);
+                    baseR = 220; baseG = 222; baseB = 226;
+                    localSpecPower = 32; localSpecIntensity = 0.50;
+                  } else {
+                    const aRaw = Math.min(1.0, Math.max(0.0, (hu - thresholdMin) / (260 - thresholdMin)));
+                    const sCurve = aRaw * aRaw * (3 - 2 * aRaw);
+                    sampleAlpha = sCurve * 0.95 * tfMult * (isUltra ? 0.35 : 0.45);
+                    baseR = 245; baseG = 35; baseB = 45;
+                    localSpecPower = 48; localSpecIntensity = 0.85;
+                  }
+                }
+              } else if (isPulmonary) {
+                if (hu >= -950 && hu <= -200) {
+                  const airRaw = Math.min(1.0, Math.max(0.0, (-200 - hu) / 750));
+                  sampleAlpha = airRaw * airRaw * tfMult * (isUltra ? 0.35 : 0.45);
+                  if (hu > -550) {
+                    baseR = 50; baseG = 215; baseB = 245;
+                    localSpecPower = 36; localSpecIntensity = 0.70;
+                  } else {
+                    baseR = 90; baseG = 65; baseB = 165;
+                    localSpecPower = 12; localSpecIntensity = 0.20;
+                  }
+                }
+              } else if (hu >= thresholdMin) {
+                const tRaw = Math.min(1.0, Math.max(0.0, (hu - thresholdMin) / tfRange));
+                const t = tRaw * tRaw * (3 - 2 * tRaw);
+                sampleAlpha = t * tfMult * (isUltra ? 0.35 : (isFast ? 0.6 : 0.45));
+
+                if (isSkin) {
+                  baseR = Math.round(218 + t * 25);
+                  baseG = Math.round(155 + t * 25);
+                  baseB = Math.round(128 + t * 25);
+                  localSpecPower = 16; localSpecIntensity = 0.35;
+                } else if (isDental) {
+                  if (hu > 900) {
+                    baseR = 252; baseG = 250; baseB = 244;
+                    localSpecPower = 75; localSpecIntensity = 0.95;
+                  } else {
+                    baseR = Math.round(240 + t * 10);
+                    baseG = Math.round(230 + t * 15);
+                    baseB = Math.round(215 + t * 20);
+                    localSpecPower = 45; localSpecIntensity = 0.65;
+                  }
+                } else if (preset.id === 'brain') {
+                  baseR = Math.round(232 - (1 - t) * 18);
+                  baseG = Math.round(196 - (1 - t) * 22);
+                  baseB = Math.round(182 - (1 - t) * 25);
+                  localSpecPower = 22; localSpecIntensity = 0.40;
+                } else if (preset.id === 'cinematic_bone') {
+                  baseR = Math.round(248 - (1 - t) * 12);
+                  baseG = Math.round(242 - (1 - t) * 16);
+                  baseB = Math.round(235 - (1 - t) * 20);
+                  localSpecPower = 64; localSpecIntensity = 0.90;
+                } else {
+                  // RadiAnt Bone Gold & Ivory
+                  const boneFactor = Math.min(1.0, Math.max(0.0, (hu - thresholdMin) / 500));
+                  baseR = Math.round(215 + boneFactor * 32);
+                  baseG = Math.round(160 + boneFactor * 78);
+                  baseB = Math.round(102 + boneFactor * 125);
+                  localSpecPower = 48; localSpecIntensity = 0.80;
+                }
               }
 
-              const cr = Math.min(255, Math.round((baseR * diffuse * aoFactor + specular * 255)));
-              const cg = Math.min(255, Math.round((baseG * diffuse * aoFactor + specular * 255)));
-              const cb = Math.min(255, Math.round((baseB * diffuse * aoFactor + specular * 255)));
+              if (sampleAlpha > 0.008) {
+                // Spacing-compensated central difference gradient for true surface normal
+                const vIdx = ivz * sliceSize + ivy * dimX + ivx;
+                const nx = (voxels[vIdx + 1] - voxels[vIdx - 1]) / (2 * spacingX);
+                const ny = (voxels[vIdx + dimX] - voxels[vIdx - dimX]) / (2 * spacingY);
+                const nz = (voxels[vIdx + sliceSize] - voxels[vIdx - sliceSize]) / (2 * spacingZ);
 
-              // Front-to-Back Alpha Compositing
-              const weight = (1.0 - accumA) * sampleAlpha;
-              accumR += cr * weight;
-              accumG += cg * weight;
-              accumB += cb * weight;
-              accumA += weight;
+                const gradLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                let diffuse = preset.diffuse;
+                let specular = 0;
+                let aoFactor = 1.0;
 
-              if (accumA >= 0.97) {
-                break; // Early Ray Termination
+                if (gradLen > 4) {
+                  const invLen = 1.0 / gradLen;
+                  const nnx = nx * invLen;
+                  const nny = ny * invLen;
+                  const nnz = nz * invLen;
+
+                  // Rotate normal to camera space
+                  const cnx1 = nnx * cosY + nnz * sinY;
+                  const cnz1 = -nnx * sinY + nnz * cosY;
+                  const cny = nny * cosP + cnz1 * sinP;
+                  const cnz = -nny * sinP + cnz1 * cosP;
+                  const cnx = cnx1;
+
+                  // 1. Key Light (Warm)
+                  const nDotKey = Math.max(0, cnx * kLx + cny * kLy + cnz * kLz);
+                  // 2. Soft Fill Light (Cool)
+                  const nDotFill = Math.max(0, cnx * fLx + cny * fLy + cnz * fLz);
+                  // 3. Rim Light (Edge)
+                  const nDotRim = Math.max(0, cnx * rLx + cny * rLy + cnz * rLz);
+
+                  diffuse = preset.ambient + preset.diffuse * (nDotKey * 0.85 + nDotFill * 0.28 + nDotRim * 0.22);
+
+                  if (localSpecPower > 0 && nDotKey > 0) {
+                    const hx = kLx;
+                    const hy = kLy;
+                    const hz = kLz + 1.0;
+                    const hLen = Math.sqrt(hx * hx + hy * hy + hz * hz) || 1;
+                    const nDotH = Math.max(0, (cnx * hx + cny * hy + cnz * hz) / hLen);
+                    specular = Math.pow(nDotH, localSpecPower) * localSpecIntensity;
+                  }
+
+                  // Ambient Occlusion
+                  if (enableAmbientOcclusion && !isFast) {
+                    const aoStepX = Math.round(nnx * 2.5);
+                    const aoStepY = Math.round(nny * 2.5);
+                    const aoStepZ = Math.round(nnz * 2.5);
+                    const aoVx = ivx + aoStepX;
+                    const aoVy = ivy + aoStepY;
+                    const aoVz = ivz + aoStepZ;
+                    if (aoVx >= 0 && aoVx < dimX && aoVy >= 0 && aoVy < dimY && aoVz >= 0 && aoVz < dimZ) {
+                      const aoHu = voxels[aoVz * sliceSize + aoVy * dimX + aoVx];
+                      if (aoHu > thresholdMin) {
+                        aoFactor = 0.72;
+                      }
+                    }
+                  }
+                }
+
+                const cr = Math.min(255, Math.round(baseR * diffuse * aoFactor + specular * 255));
+                const cg = Math.min(255, Math.round(baseG * diffuse * aoFactor + specular * 255));
+                const cb = Math.min(255, Math.round(baseB * diffuse * aoFactor + specular * 255));
+
+                const weight = (1.0 - accumA) * sampleAlpha;
+                accumR += cr * weight;
+                accumG += cg * weight;
+                accumB += cb * weight;
+                accumA += weight;
+
+                if (accumA >= 0.98) {
+                  break;
+                }
               }
             }
           }
@@ -406,12 +525,17 @@ export class VolumeRaycaster {
           if (maxHuMip >= thresholdMin) {
             const norm = Math.min(1.0, (maxHuMip - thresholdMin) / tfRange);
             outR = Math.round(255 * norm);
-            outG = Math.round(220 * norm);
-            outB = Math.round(180 * norm);
+            outG = Math.round(225 * norm);
+            outB = Math.round(185 * norm);
             outA = 255;
           } else {
             outR = 0; outG = 0; outB = 0; outA = 0;
           }
+        } else if (accumA > 0) {
+          // Perceptual Gamma Correction
+          outR = Math.min(255, Math.round(Math.pow(outR / 255, invGamma) * 255));
+          outG = Math.min(255, Math.round(Math.pow(outG / 255, invGamma) * 255));
+          outB = Math.min(255, Math.round(Math.pow(outB / 255, invGamma) * 255));
         }
 
         if (skipStep === 1) {
